@@ -1,0 +1,6 @@
+@CustomFumenProviderWebServer_HostAddress = http://localhost:5160
+
+GET {{CustomFumenProviderWebServer_HostAddress}}/weatherforecast/
+Accept: application/json
+
+###

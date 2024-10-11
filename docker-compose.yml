@@ -1,0 +1,59 @@
+version: '3.4'
+
+services:
+  my_web_db:
+    container_name: my_web_db
+    image: mariadb:latest
+    restart: always
+    networks:
+      my_web_net:
+        ipv4_address: 196.18.0.5
+    volumes:
+      - "my_db_vol:/var/lib/mysql"
+    environment:
+      MYSQL_ROOT_PASSWORD: q6523230
+
+  my_wait_for_db:
+    image: atkrad/wait4x
+    networks:
+      my_web_net:
+        ipv4_address: 196.18.0.4
+    depends_on:
+      - my_web_db
+    command: tcp 196.18.0.5:3306 -t 30s -i 250ms
+
+  my_fumen_server:
+    image: mikirasora/fumen_server:latest
+    build:
+      context: .
+      dockerfile: CustomFumenProviderWebServer/Dockerfile
+    depends_on:
+      my_wait_for_db:
+        condition: service_completed_successfully
+    environment:
+      IS_DOCKER_ENVIRONMENT: "TRUE"
+      ASPNETCORE_HTTPS_PORTS": 8081,
+      ASPNETCORE_HTTP_PORTS": 8080,
+      ASPNETCORE_ENVIRONMENT: Production
+      DBConnectString: "Server=196.18.0.5;Database=fumen;Uid=root;Pwd=q6523230;"
+      FumenDirectory: "/FumenDirectory"
+      DBVersion: "11.5.2"
+    volumes:
+      - "my_fumen_vol:/FumenDirectory"
+    ports:
+      - "12380:8080"
+      - "12381:8081"
+    networks:
+      my_web_net:
+        ipv4_address: 196.18.0.6
+
+networks:
+  my_web_net:
+    ipam:
+      config:
+        - subnet: 196.18.0.0/24
+          gateway: 196.18.0.1
+
+volumes:
+  my_db_vol:
+  my_fumen_vol:
