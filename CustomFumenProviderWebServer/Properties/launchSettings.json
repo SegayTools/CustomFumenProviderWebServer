@@ -5,7 +5,10 @@
             "launchBrowser": true,
             "launchUrl": "Swagger",
             "environmentVariables": {
-                "ASPNETCORE_ENVIRONMENT": "Development"
+                "ASPNETCORE_ENVIRONMENT": "Development",
+                "DBConnectString": "Server=localhost;Port=13306;Database=fumen;Uid=root;Pwd=q6523230;",
+                "FumenDirectory": "/FumenDirectory",
+                "DBVersion": "8.0.32"
             },
             "dotnetRunMessages": true,
             "applicationUrl": "http://localhost:5201"
