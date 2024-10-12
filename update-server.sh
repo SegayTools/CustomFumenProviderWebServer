@@ -1,0 +1,1 @@
+docker pull mikirasora/fumen_server:latest
