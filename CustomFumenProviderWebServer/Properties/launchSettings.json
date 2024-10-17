@@ -44,9 +44,9 @@
             "environmentVariables": {
                 "ASPNETCORE_HTTPS_PORTS": "8081",
                 "ASPNETCORE_HTTP_PORTS": "8080",
-                "DBConnectString": "Server=localhost;Port=13306;Database=fumen;Uid=root;Pwd=q6523230;",
+                "DBConnectString": "Server=172.17.0.3;Database=fumen;Uid=root;Pwd=q6523230;",
                 "FumenDirectory": "/FumenDirectory",
-                "DBVersion": "8.0.32"
+                "DBVersion": "11.5.2"
             },
             "publishAllPorts": true,
             "useSSL": true

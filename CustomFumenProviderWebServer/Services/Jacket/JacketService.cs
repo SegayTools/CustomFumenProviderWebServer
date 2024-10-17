@@ -18,15 +18,15 @@ namespace CustomFumenProviderWebServer.Services.Jacket
             var binFolder = "";
             var resourcePath = "";
 
+            binFolder = Path.GetTempFileName().Replace(".", string.Empty) + "_JacketGenerator";
+
             if (Environment.OSVersion.Platform == PlatformID.Unix)
             {
-                binFolder = Path.GetFullPath("./JacketGeneratorBin");
                 resourcePath = "CustomFumenProviderWebServer.Resources.Jacket.linux.zip";
                 binPath = Path.Combine(binFolder, "JacketGenerator");
             }
             else
             {
-                binFolder = Path.GetTempFileName().Replace(".", string.Empty) + "_JacketGenerator";
                 resourcePath = "CustomFumenProviderWebServer.Resources.Jacket.win.zip";
                 binPath = Path.Combine(binFolder, "JacketGenerator.exe");
             }
@@ -38,6 +38,9 @@ namespace CustomFumenProviderWebServer.Services.Jacket
             logger.LogInformation($"extract {resourcePath} to {binFolder}");
             zip.ExtractToDirectory(binFolder, true);
             logger.LogInformation($"JacketGenerator bin file: {binPath}");
+
+            if (Environment.OSVersion.Platform == PlatformID.Unix)
+                File.SetUnixFileMode(binPath, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
         }
 
         private Task<ExecResult> Exec(params string[] args)

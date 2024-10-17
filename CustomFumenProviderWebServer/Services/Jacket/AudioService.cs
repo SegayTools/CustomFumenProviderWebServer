@@ -22,26 +22,28 @@ namespace CustomFumenProviderWebServer.Services.Jacket
             var binFolder = "";
             var resourcePath = "";
 
+            binFolder = Path.GetTempFileName().Replace(".", string.Empty) + "_AcbGeneratorFuck";
+
             if (Environment.OSVersion.Platform == PlatformID.Unix)
             {
-                binFolder = Path.GetFullPath("./AcbGeneratorFuckBin");
                 resourcePath = "CustomFumenProviderWebServer.Resources.Audio.linux.zip";
                 binPath = Path.Combine(binFolder, "AcbGeneratorFuck.Console");
             }
             else
             {
-                binFolder = Path.GetTempFileName().Replace(".", string.Empty) + "_AcbGeneratorFuck";
                 resourcePath = "CustomFumenProviderWebServer.Resources.Audio.win.zip";
                 binPath = Path.Combine(binFolder, "AcbGeneratorFuck.Console.exe");
             }
 
-            File.Delete(binFolder);
             Directory.CreateDirectory(binFolder);
 
             using var zip = new ZipArchive(typeof(JacketService).Assembly.GetManifestResourceStream(resourcePath));
             logger.LogInformation($"extract {resourcePath} to {binFolder}");
             zip.ExtractToDirectory(binFolder, true);
             logger.LogInformation($"AcbGeneratorFuck bin file: {binPath}");
+
+            if (Environment.OSVersion.Platform == PlatformID.Unix)
+                File.SetUnixFileMode(binPath, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
         }
 
         private Task<ExecResult> Exec(params string[] args)
