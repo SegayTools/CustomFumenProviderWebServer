@@ -10,6 +10,28 @@
 	</PropertyGroup>
 
 	<ItemGroup>
+	  <None Remove="Resources\Audio\linux.zip" />
+	  <None Remove="Resources\Audio\win.zip" />
+	  <None Remove="Resources\Jacket\linux.zip" />
+	  <None Remove="Resources\Jacket\win.zip" />
+	  <None Remove="Resources\Music.xml" />
+	  <None Remove="Resources\MusicSource.xml" />
+	  <None Remove="Resources\Readme.txt" />
+	  <None Remove="Resources\RegisterFumenJackets.exe" />
+	</ItemGroup>
+
+	<ItemGroup>
+	  <EmbeddedResource Include="Resources\Audio\linux.zip" />
+	  <EmbeddedResource Include="Resources\Audio\win.zip" />
+	  <EmbeddedResource Include="Resources\Jacket\linux.zip" />
+	  <EmbeddedResource Include="Resources\Jacket\win.zip" />
+	  <EmbeddedResource Include="Resources\Music.xml" />
+	  <EmbeddedResource Include="Resources\MusicSource.xml" />
+	  <EmbeddedResource Include="Resources\Readme.txt" />
+	  <EmbeddedResource Include="Resources\RegisterFumenJackets.exe" />
+	</ItemGroup>
+
+	<ItemGroup>
 		<PackageReference Include="Microsoft.EntityFrameworkCore" Version="8.0.10" />
 		<PackageReference Include="Microsoft.EntityFrameworkCore.Proxies" Version="8.0.10" />
 		<PackageReference Include="Microsoft.EntityFrameworkCore.Tools" Version="8.0.10">
@@ -19,10 +41,6 @@
 		<PackageReference Include="Microsoft.VisualStudio.Azure.Containers.Tools.Targets" Version="1.21.0" />
 		<PackageReference Include="Pomelo.EntityFrameworkCore.MySql" Version="8.0.2" />
 		<PackageReference Include="Swashbuckle.AspNetCore" Version="6.8.1" />
-	</ItemGroup>
-
-	<ItemGroup>
-	  <Folder Include="Services\" />
 	</ItemGroup>
 
 </Project>

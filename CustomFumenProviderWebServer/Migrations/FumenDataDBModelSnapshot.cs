@@ -61,17 +61,50 @@ namespace CustomFumenProviderWebServer.Migrations
                     b.Property<int>("BossCardId")
                         .HasColumnType("int");
 
+                    b.Property<string>("BossCardName")
+                        .HasColumnType("longtext");
+
                     b.Property<int>("BossLevel")
                         .HasColumnType("int");
 
-                    b.Property<string>("Genre")
+                    b.Property<int>("BossLockHpCoef")
+                        .HasColumnType("int");
+
+                    b.Property<int>("BossVoiceNo")
+                        .HasColumnType("int");
+
+                    b.Property<int>("GenreId")
+                        .HasColumnType("int");
+
+                    b.Property<string>("GenreName")
+                        .HasColumnType("longtext");
+
+                    b.Property<int>("MusicRightsId")
+                        .HasColumnType("int");
+
+                    b.Property<string>("MusicRightsName")
+                        .HasColumnType("longtext");
+
+                    b.Property<int>("PublishState")
+                        .HasColumnType("int");
+
+                    b.Property<int>("StageId")
+                        .HasColumnType("int");
+
+                    b.Property<string>("StageName")
                         .HasColumnType("longtext");
 
                     b.Property<string>("Title")
                         .HasColumnType("longtext");
 
                     b.Property<DateTime>("UpdateTime")
-                        .HasColumnType("datetime");
+                        .HasColumnType("datetime(6)");
+
+                    b.Property<int>("VersionId")
+                        .HasColumnType("int");
+
+                    b.Property<string>("VersionName")
+                        .HasColumnType("longtext");
 
                     b.Property<string>("WaveAttribute")
                         .HasColumnType("longtext");

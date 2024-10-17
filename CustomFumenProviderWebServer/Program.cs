@@ -1,4 +1,5 @@
 using CustomFumenProviderWebServer.Databases;
+using CustomFumenProviderWebServer.Services.Jacket;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.FileProviders;
 using Microsoft.Extensions.Hosting;
@@ -37,6 +38,11 @@ namespace CustomFumenProviderWebServer
             });
 
             builder.Services.AddDirectoryBrowser();
+
+            //
+            builder.Services.AddSingleton<JacketService>();
+            builder.Services.AddSingleton<MusicXmlService>();
+            builder.Services.AddSingleton<AudioService>();
 
             //----------------------------------------------------------
 

@@ -1,29 +1,48 @@
 ﻿using CustomFumenProviderWebServer.Databases;
 using CustomFumenProviderWebServer.Models.Responses;
 using CustomFumenProviderWebServer.Models.Tables;
+using CustomFumenProviderWebServer.Services.Jacket;
+using CustomFumenProviderWebServer.Utils;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
+using System;
+using System.Buffers;
+using System.IO.Compression;
 using System.Linq.Expressions;
+using System.Text.Json;
+using System.Xml.Linq;
 
 namespace CustomFumenProviderWebServer.Controllers
 {
     [ApiController]
     [Route("fumen")]
+    [RequestSizeLimit(50_000_000)]
     public partial class FumenController : ControllerBase
     {
         private readonly ILogger<FumenController> logger;
         private readonly IDbContextFactory<FumenDataDB> fumenDataDBFactory;
+        private readonly AudioService audioService;
+        private readonly JacketService jacketService;
+        private readonly MusicXmlService musicXmlService;
         private readonly string fumenFolderPath;
+        private static readonly JsonSerializerOptions jsonSerializerOptions = new JsonSerializerOptions()
+        {
+            WriteIndented = true,
+            Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping,
+        };
 
-        public FumenController(ILogger<FumenController> logger, IDbContextFactory<FumenDataDB> fumenDataDBFactory)
+        public FumenController(ILogger<FumenController> logger, IDbContextFactory<FumenDataDB> fumenDataDBFactory, AudioService audioService, JacketService jacketService, MusicXmlService musicXmlService)
         {
             this.logger = logger;
             this.fumenDataDBFactory = fumenDataDBFactory;
+            this.audioService = audioService;
+            this.jacketService = jacketService;
+            this.musicXmlService = musicXmlService;
             this.fumenFolderPath = Environment.GetEnvironmentVariable("FumenDirectory");
         }
 
         /// <summary>
-        /// 获取谱面列表
+        /// 获取(已公开的)谱面列表
         /// </summary>
         /// <param name="pageIdx">页号 (从0开始)</param>
         /// <param name="countPerPage">每一页显示多少个谱面</param>
@@ -40,11 +59,11 @@ namespace CustomFumenProviderWebServer.Controllers
 
             using var db = await fumenDataDBFactory.CreateDbContextAsync();
 
-            IQueryable<FumenSet> list = db.FumenSets;
+            IQueryable<FumenSet> list = db.FumenSets.Where(x => x.PublishState == Models.PublishState.Published);
 
             if (!string.IsNullOrWhiteSpace(genre))
             {
-                list = list.Where(x => x.Genre == genre);
+                list = list.Where(x => x.GenreName == genre);
             }
 
             if (!string.IsNullOrWhiteSpace(order))
@@ -52,52 +71,277 @@ namespace CustomFumenProviderWebServer.Controllers
                 list = list.OrderBy(x => EF.Property<FumenSet>(x, order));
             }
 
-            var fumenSets = await list.Skip(offset).Take(countPerPage).Include(x => x.FumenDifficults).ToListAsync();
-
             if (minFilterLevel is float minLevel)
             {
-                for (int setIdx = 0; setIdx < fumenSets.Count; setIdx++)
-                {
-                    var set = fumenSets[setIdx];
-                    for (int diffIdx = 0; diffIdx < set.FumenDifficults.Count; diffIdx++)
-                    {
-                        var diff = set.FumenDifficults.ElementAt(diffIdx);
-                        if (diff.Level < minLevel)
-                        {
-                            set.FumenDifficults.Remove(diff);
-                            diffIdx--;
-                        }
-                    }
-
-                    if (set.FumenDifficults.Count == 0)
-                        fumenSets.RemoveAt(setIdx--);
-                }
+                list = list.Where(x => x.FumenDifficults.Any(d => d.Level >= minLevel));
             }
 
             if (maxFilterLevel is float maxLevel)
             {
-                for (int setIdx = 0; setIdx < fumenSets.Count; setIdx++)
-                {
-                    var set = fumenSets[setIdx];
-                    for (int diffIdx = 0; diffIdx < set.FumenDifficults.Count; diffIdx++)
-                    {
-                        var diff = set.FumenDifficults.ElementAt(diffIdx);
-                        if (diff.Level > maxLevel)
-                        {
-                            set.FumenDifficults.Remove(diff);
-                            diffIdx--;
-                        }
-                    }
-
-                    if (set.FumenDifficults.Count == 0)
-                        fumenSets.RemoveAt(setIdx--);
-                }
+                list = list.Where(x => x.FumenDifficults.Any(d => d.Level <= maxLevel));
             }
 
+            var fumenSets = await list.Include(x => x.FumenDifficults).ToListAsync();
+
             var response = new FumenQueryResponse();
-            response.FumenSets = fumenSets;
+
+            response.FumenSets = fumenSets.Skip(offset).Take(countPerPage).ToList();
+            response.QueryResultTotal = fumenSets.Count;
 
             return response;
+        }
+
+        [Route("listPending")]
+        [HttpGet]
+        public async Task<FumenQueryResponse> ListPending(int pageIdx, int countPerPage)
+        {
+            var offset = pageIdx * countPerPage;
+
+            using var db = await fumenDataDBFactory.CreateDbContextAsync();
+
+            IQueryable<FumenSet> list = db.FumenSets.Where(x => x.PublishState == Models.PublishState.Pending);
+
+            var fumenSets = await list.Include(x => x.FumenDifficults).ToListAsync();
+
+            var response = new FumenQueryResponse();
+
+            response.FumenSets = fumenSets.Skip(offset).Take(countPerPage).ToList();
+            response.QueryResultTotal = fumenSets.Count;
+
+            return response;
+        }
+
+        [Route("deliverFumen")]
+        [HttpPost]
+        public async Task<DeliverResultResponse> DeliverFumen(
+            IFormFile jacketFormFile,
+            IFormFile audioFormFile,
+            IFormFile musicXmlFormFile,
+
+            IFormFile bscOgkrFormFile,
+            IFormFile advOgkrFormFile,
+            IFormFile expOgkrFormFile,
+            IFormFile mstOgkrFormFile,
+            IFormFile lucOgkrFormFile
+            )
+        {
+            //step0: check permission
+
+
+            async Task downloadToFile(string saveFilePath, IFormFile file)
+            {
+                if (file is null)
+                    return;
+                var formStream = file.OpenReadStream();
+                using var fs = System.IO.File.OpenWrite(saveFilePath);
+                await formStream.CopyToAsync(fs);
+            }
+
+            if (jacketFormFile is null)
+                return new(false, "jacket file is not upload.");
+            if (audioFormFile is null)
+                return new(false, "audio file is not upload.");
+            if (musicXmlFormFile is null)
+                return new(false, "Music.xml file is not upload.");
+
+            var tempFolder = TempPathUtils.GetNewTempFolder();
+            var jacketFilePath = Path.Combine(tempFolder, $"jacket" + Path.GetExtension(jacketFormFile.FileName));
+            var audioFilePath = Path.Combine(tempFolder, $"audio" + Path.GetExtension(audioFormFile.FileName));
+            var bscOgkrFilePath = Path.Combine(tempFolder, $"fumen1.ogkr");
+            var advOgkrFilePath = Path.Combine(tempFolder, $"fumen2.ogkr");
+            var expOgkrFilePath = Path.Combine(tempFolder, $"fumen3.ogkr");
+            var mstOgkrFilePath = Path.Combine(tempFolder, $"fumen4.ogkr");
+            var lucOgkrFilePath = Path.Combine(tempFolder, $"fumen5.ogkr");
+            var xmlFilePath = Path.Combine(tempFolder, $"music.xml");
+
+            var generatedTempFolder = Path.Combine(tempFolder, "generated");
+            Directory.CreateDirectory(generatedTempFolder);
+
+            var optTempFolder = Path.Combine(generatedTempFolder, "opt");
+            Directory.CreateDirectory(optTempFolder);
+
+            await Task.WhenAll([
+                downloadToFile(jacketFilePath,jacketFormFile),
+                downloadToFile(audioFilePath,audioFormFile),
+                downloadToFile(bscOgkrFilePath,bscOgkrFormFile),
+                downloadToFile(advOgkrFilePath,advOgkrFormFile),
+                downloadToFile(expOgkrFilePath,expOgkrFormFile),
+                downloadToFile(mstOgkrFilePath,mstOgkrFormFile),
+                downloadToFile(lucOgkrFilePath,lucOgkrFormFile),
+                downloadToFile(xmlFilePath,musicXmlFormFile),
+                ]);
+
+            //step1: generate FumenSet
+            FumenSet set;
+            try
+            {
+                var result = await musicXmlService.GenerateFumenSet(xmlFilePath, bscOgkrFilePath, advOgkrFilePath, expOgkrFilePath, mstOgkrFilePath, lucOgkrFilePath);
+                if (!result.IsSuccess)
+                    return new(false, result.Message);
+                set = result.Data;
+            }
+            catch (Exception e)
+            {
+                return new DeliverResultResponse(false, $"Generate FumenSet throw exception:{e.Message}");
+            }
+
+            var musicIdStr = set.MusicId.ToString().PadLeft(4, '0');
+
+            //step2: generate Jacket
+            try
+            {
+                void rename(ref string filePath, string newName)
+                {
+                    var newFilePath = Path.Combine(Path.GetDirectoryName(filePath), newName);
+                    System.IO.File.Move(filePath, newFilePath);
+                    filePath = newFilePath;
+                }
+
+                //rename
+                var assetsFolder = Path.Combine(optTempFolder, "assets");
+                Directory.CreateDirectory(assetsFolder);
+
+                rename(ref jacketFilePath, $"{musicIdStr}.png");
+                var result = await jacketService.GenerateAssetbundleJacket(jacketFilePath, false, 520, 520, assetsFolder);
+                if (!result.IsSuccess)
+                    return new(false, "Generate jacket failed:" + result.Message);
+
+                rename(ref jacketFilePath, $"{musicIdStr}_s.png");
+                result = await jacketService.GenerateAssetbundleJacket(jacketFilePath, true, 220, 220, assetsFolder);
+                if (!result.IsSuccess)
+                    return new(false, "Generate jacket failed:" + result.Message);
+            }
+            catch (Exception e)
+            {
+                return new DeliverResultResponse(false, $"Generate jacket throw exception:{e.Message}");
+            }
+
+            //step3: generate Audio
+            try
+            {
+                var audioFolder = Path.Combine(optTempFolder, "musicsource", $"musicsource{musicIdStr}");
+                Directory.CreateDirectory(audioFolder);
+
+                var result = await audioService.GenerateAcbAwbFiles(audioFilePath, set.MusicId, set.Title, audioFolder);
+                if (!result.IsSuccess)
+                    return new(false, "Generate audio failed:" + result.Message);
+            }
+            catch (Exception e)
+            {
+                return new DeliverResultResponse(false, $"Generate audio throw exception:{e.Message}");
+            }
+
+            //step4: copy files.
+            var fumenFolder = Path.Combine(optTempFolder, "music", $"music{musicIdStr}");
+            Directory.CreateDirectory(fumenFolder);
+            try
+            {
+                void CopyOgkrFile(string ogkrFile, int diffIdx)
+                {
+                    if (!System.IO.File.Exists(ogkrFile))
+                        return;
+
+                    var fileName = $"{musicIdStr}_0{diffIdx}.ogkr";
+                    var outputFumenFile = Path.Combine(fumenFolder, fileName);
+
+                    System.IO.File.Copy(ogkrFile, outputFumenFile, true);
+                }
+
+                CopyOgkrFile(bscOgkrFilePath, 0);
+                CopyOgkrFile(advOgkrFilePath, 1);
+                CopyOgkrFile(expOgkrFilePath, 2);
+                CopyOgkrFile(mstOgkrFilePath, 3);
+                CopyOgkrFile(lucOgkrFilePath, 4);
+            }
+            catch (Exception e)
+            {
+                return new DeliverResultResponse(false, $"Copy fumen files throw exception:{e.Message}");
+            }
+
+            //step5: generate Music.xml
+            try
+            {
+                var outputXmlFilePath = Path.Combine(fumenFolder, "Music.xml");
+                await musicXmlService.GenerateMusicXml(set, outputXmlFilePath);
+            }
+            catch (Exception e)
+            {
+                return new DeliverResultResponse(false, $"Copy fumen files throw exception:{e.Message}");
+            }
+
+            //todo step6: add Readme.md and RegisterFumenJackets.exe
+
+            //step7: pack opt as .zip
+            var zipFile = Path.Combine(generatedTempFolder, $"fumen{musicIdStr}.zip");
+            await Task.Run(() =>
+            {
+                using var fs = System.IO.File.OpenWrite(zipFile);
+                ZipFile.CreateFromDirectory(optTempFolder, fs, CompressionLevel.SmallestSize, false);
+                Directory.Delete(optTempFolder, true);
+            });
+
+            //step8: generate info.json
+            {
+                var infoJsonFilePath = Path.Combine(generatedTempFolder, $"info.json");
+                using var fs = System.IO.File.OpenWrite(infoJsonFilePath);
+                await JsonSerializer.SerializeAsync(fs, set, jsonSerializerOptions);
+            }
+
+            //step8: move .png file
+            {
+                var outputJacketFilePath = Path.Combine(generatedTempFolder, $"jacket.png");
+                System.IO.File.Move(jacketFilePath, outputJacketFilePath, true);
+            }
+
+            //step9: register in database
+            set.PublishState = Models.PublishState.Pending;
+            set.UpdateTime = DateTime.Now;
+
+            using var db = await fumenDataDBFactory.CreateDbContextAsync();
+            using var trans = await db.Database.BeginTransactionAsync();
+
+            try
+            {
+
+                var isUpdate = false;
+                if ((await db.FumenSets.FindAsync(set.MusicId)) is FumenSet cSet)
+                {
+                    isUpdate = true;
+                    db.Remove(cSet);
+                    await db.SaveChangesAsync();
+                }
+
+                db.Add(set);
+                await db.SaveChangesAsync();
+
+                //step10: move generated files to storage.
+                var storagePath = Path.Combine(fumenFolderPath, $"fumen{musicIdStr}");
+                Directory.CreateDirectory(storagePath);
+                if (isUpdate)
+                {
+                    //remove old files
+                    foreach (var deleteFilePath in Directory.GetFiles(storagePath))
+                        System.IO.File.Delete(deleteFilePath);
+                }
+                foreach (var srcFilePath in Directory.GetFiles(generatedTempFolder))
+                {
+                    //move files
+                    var dstFilePath = Path.Combine(storagePath, Path.GetFileName(srcFilePath));
+                    System.IO.File.Copy(srcFilePath, dstFilePath, true);
+                }
+
+                await trans.CommitAsync();
+                return new(true, "register successfully, waiting for pending", set);
+            }
+            catch (Exception e)
+            {
+                await trans.RollbackAsync();
+                return new(false, $"Register fumen data throw exception: {e.Message}");
+            }
+            finally
+            {
+                Directory.Delete(tempFolder, true);
+            }
         }
     }
 }
