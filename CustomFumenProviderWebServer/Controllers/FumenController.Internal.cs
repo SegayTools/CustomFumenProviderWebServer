@@ -15,9 +15,9 @@ namespace CustomFumenProviderWebServer.Controllers
     public partial class FumenController : ControllerBase
     {
         /// <summary>
-        /// 删除 谱面信息
+        /// 审核通过,公开谱面
         /// </summary>
-        /// <param name="musicId">要删除谱面信息的musicId</param>
+        /// <param name="musicId">要公开谱面的musicId</param>
         /// <returns></returns>
         [HttpPost]
         [Route("publishFumen")]
@@ -53,9 +53,9 @@ namespace CustomFumenProviderWebServer.Controllers
         }
 
         /// <summary>
-        /// 删除 谱面信息
+        /// 删除 谱面
         /// </summary>
-        /// <param name="musicId">要删除谱面信息的musicId</param>
+        /// <param name="musicId">要删除谱面的musicId</param>
         /// <returns></returns>
         [HttpDelete]
         [Route("remove")]

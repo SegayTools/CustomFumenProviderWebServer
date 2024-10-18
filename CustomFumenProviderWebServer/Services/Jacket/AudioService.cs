@@ -72,7 +72,7 @@ namespace CustomFumenProviderWebServer.Services.Jacket
             return new(true);
         }
 
-        private static async ValueTask GenerateMusicSourceXmlAsync(string outputFolder, int musicId, string title)
+        public async ValueTask GenerateMusicSourceXmlAsync(string outputFolder, int musicId, string title)
         {
             using var resStream = typeof(AudioService).Assembly.GetManifestResourceStream("CustomFumenProviderWebServer.Resources.MusicSource.xml");
             var musicSourceXml = await XDocument.LoadAsync(resStream, LoadOptions.None, default);

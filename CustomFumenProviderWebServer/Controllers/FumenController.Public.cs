@@ -91,6 +91,12 @@ namespace CustomFumenProviderWebServer.Controllers
             return response;
         }
 
+        /// <summary>
+        /// 获取(正在审核的)谱面列表
+        /// </summary>
+        /// <param name="pageIdx"></param>
+        /// <param name="countPerPage"></param>
+        /// <returns></returns>
         [Route("listPending")]
         [HttpGet]
         public async Task<FumenQueryResponse> ListPending(int pageIdx, int countPerPage)
@@ -111,6 +117,19 @@ namespace CustomFumenProviderWebServer.Controllers
             return response;
         }
 
+        /// <summary>
+        /// 投稿自制谱, 并等待审核
+        /// 注意: 上传Body限制50M大小
+        /// </summary>
+        /// <param name="jacketFormFile">谱面封面文件 (.png/assetbundle)</param>
+        /// <param name="audioFormFile">谱面音频文件 (.wav/mp3)</param>
+        /// <param name="musicXmlFormFile">谱面歌曲信息文件 (Music.xml)</param>
+        /// <param name="bscOgkrFormFile">(可选)谱面Basic文件 (.ogkr)</param>
+        /// <param name="advOgkrFormFile">(可选)谱面Advanced文件 (.ogkr)</param>
+        /// <param name="expOgkrFormFile">(可选)谱面Expert文件 (.ogkr)</param>
+        /// <param name="mstOgkrFormFile">(可选)谱面Master文件 (.ogkr)</param>
+        /// <param name="lucOgkrFormFile">(可选)谱面Lunatic文件 (.ogkr)</param>
+        /// <returns></returns>
         [Route("deliverFumen")]
         [HttpPost]
         public async Task<DeliverResultResponse> DeliverFumen(
@@ -125,9 +144,6 @@ namespace CustomFumenProviderWebServer.Controllers
             IFormFile lucOgkrFormFile
             )
         {
-            //step0: check permission
-
-
             async Task downloadToFile(string saveFilePath, IFormFile file)
             {
                 if (file is null)
@@ -197,7 +213,17 @@ namespace CustomFumenProviderWebServer.Controllers
                     filePath = newFilePath;
                 }
 
-                //rename
+                if (await FileUtils.CheckFileSignature(jacketFilePath, "UnityFS"))
+                {
+                    //dump as png file
+                    rename(ref jacketFilePath, $"jacket.ab");
+                    var outputPngFile = Path.Combine(Path.GetDirectoryName(jacketFilePath), "output.png");
+                    var dumpResult = await jacketService.DumpPngFromAssetbundle(jacketFilePath, outputPngFile);
+                    if (!dumpResult.IsSuccess)
+                        return new(false, $"convert .ab to .png failed: {dumpResult.Message}");
+                    jacketFilePath = outputPngFile;
+                }
+
                 var assetsFolder = Path.Combine(optTempFolder, "assets");
                 Directory.CreateDirectory(assetsFolder);
 
