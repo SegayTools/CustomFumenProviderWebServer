@@ -15,7 +15,7 @@ using System.Xml.Linq;
 namespace CustomFumenProviderWebServer.Controllers
 {
     [ApiController]
-    [Route("fumen")]
+    [Route("api")]
     [RequestSizeLimit(300_000_000)]
     public partial class FumenController : ControllerBase
     {
