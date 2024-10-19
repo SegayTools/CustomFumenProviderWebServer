@@ -7,7 +7,7 @@ using System.IO.Compression;
 using TexturePlugin;
 using static CustomFumenProviderWebServer.Utils.ProcessExec;
 
-namespace CustomFumenProviderWebServer.Services.Jacket
+namespace CustomFumenProviderWebServer.Services
 {
     public class JacketService
     {
@@ -21,7 +21,7 @@ namespace CustomFumenProviderWebServer.Services.Jacket
             var binFolder = "";
             var resourcePath = "";
 
-            binFolder = Path.GetTempFileName().Replace(".", string.Empty) + "_JacketGenerator";
+            binFolder = Path.GetTempFileName() + "_JacketGenerator";
 
             if (Environment.OSVersion.Platform == PlatformID.Unix)
             {

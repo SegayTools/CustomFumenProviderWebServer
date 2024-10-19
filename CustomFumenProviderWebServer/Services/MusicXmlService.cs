@@ -12,7 +12,7 @@ using System.Xml.Linq;
 using System.Xml.XPath;
 using static CustomFumenProviderWebServer.Utils.ProcessExec;
 
-namespace CustomFumenProviderWebServer.Services.Jacket
+namespace CustomFumenProviderWebServer.Services
 {
     public class MusicXmlService
     {
@@ -79,6 +79,7 @@ namespace CustomFumenProviderWebServer.Services.Jacket
                 StageName = GetString("StageID"),
                 VersionId = GetId("VersionID"),
                 VersionName = GetString("VersionID"),
+                SortOrder = GetPathValue<int>("SortOrder"),
                 BossLevel = GetPathValue<int>("BossLevel"),
                 BossLockHpCoef = GetPathValue<int>("BossLockHpCoef"),
                 BossVoiceNo = GetPathValue<int>("BossVoiceNo"),
@@ -106,7 +107,7 @@ namespace CustomFumenProviderWebServer.Services.Jacket
                 var diff = new FumenDifficult();
                 diff.DifficultIndex = idx - 1;
                 diff.MusicId = set.MusicId;
-                diff.Level = (int.TryParse(fumenConstIntegerPart, out var d1) ? d1 : 0) + ((int.TryParse(fumenConstFractionalPart, out var d2) ? d2 : 0) / 100.0f);
+                diff.Level = (int.TryParse(fumenConstIntegerPart, out var d1) ? d1 : 0) + (int.TryParse(fumenConstFractionalPart, out var d2) ? d2 : 0) / 100.0f;
 
                 var result = await ParseFumenFileInfo(diff, fumenFilePath);
                 if (!result.IsSuccess)
@@ -190,7 +191,7 @@ namespace CustomFumenProviderWebServer.Services.Jacket
 
             GetNode(musicXml, "WaveAttribute", "AttributeType").Value = set.WaveAttribute.ToString();
             GetNode(musicXml, "BossLevel").Value = set.BossLevel.ToString();
-            GetNode(musicXml, "SortOrder").Value = set.Title;
+            GetNode(musicXml, "SortOrder").Value = set.SortOrder.ToString();
             GetNode(musicXml, "NameForSort").Value = set.Title.ToUpper();
             GetNode(musicXml, "BossLockHpCoef").Value = set.BossLockHpCoef.ToString();
             GetNode(musicXml, "BossVoiceNo").Value = set.BossVoiceNo.ToString();

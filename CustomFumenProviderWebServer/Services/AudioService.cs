@@ -8,12 +8,13 @@ using System.Xml;
 using static CustomFumenProviderWebServer.Utils.ProcessExec;
 using System.Xml.XPath;
 
-namespace CustomFumenProviderWebServer.Services.Jacket
+namespace CustomFumenProviderWebServer.Services
 {
     public class AudioService
     {
         private readonly ILogger<AudioService> logger;
-        private string binPath;
+        private string acbGeneratorBinPath;
+        private string acb2wavBinPath;
 
         public AudioService(ILogger<AudioService> logger)
         {
@@ -22,17 +23,19 @@ namespace CustomFumenProviderWebServer.Services.Jacket
             var binFolder = "";
             var resourcePath = "";
 
-            binFolder = Path.GetTempFileName().Replace(".", string.Empty) + "_AcbGeneratorFuck";
+            binFolder = Path.GetTempFileName() + "_AcbGeneratorFuck";
 
             if (Environment.OSVersion.Platform == PlatformID.Unix)
             {
                 resourcePath = "CustomFumenProviderWebServer.Resources.Audio.linux.zip";
-                binPath = Path.Combine(binFolder, "AcbGeneratorFuck.Console");
+                acbGeneratorBinPath = Path.Combine(binFolder, "AcbGeneratorFuck.Console");
+                acb2wavBinPath = Path.Combine(binFolder, "acb2wavs");
             }
             else
             {
                 resourcePath = "CustomFumenProviderWebServer.Resources.Audio.win.zip";
-                binPath = Path.Combine(binFolder, "AcbGeneratorFuck.Console.exe");
+                acbGeneratorBinPath = Path.Combine(binFolder, "AcbGeneratorFuck.Console.exe");
+                acb2wavBinPath = Path.Combine(binFolder, "acb2wavs.exe");
             }
 
             Directory.CreateDirectory(binFolder);
@@ -40,15 +43,19 @@ namespace CustomFumenProviderWebServer.Services.Jacket
             using var zip = new ZipArchive(typeof(JacketService).Assembly.GetManifestResourceStream(resourcePath));
             logger.LogInformation($"extract {resourcePath} to {binFolder}");
             zip.ExtractToDirectory(binFolder, true);
-            logger.LogInformation($"AcbGeneratorFuck bin file: {binPath}");
+            logger.LogInformation($"AcbGeneratorFuck bin file: {acbGeneratorBinPath}");
+            logger.LogInformation($"Acb2wavs file: {acb2wavBinPath}");
 
             if (Environment.OSVersion.Platform == PlatformID.Unix)
-                File.SetUnixFileMode(binPath, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+            {
+                File.SetUnixFileMode(acbGeneratorBinPath, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+                File.SetUnixFileMode(acb2wavBinPath, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+            }
         }
 
         private Task<ExecResult> Exec(params string[] args)
         {
-            return ProcessExec.Exec(binPath, args);
+            return ProcessExec.Exec(acbGeneratorBinPath, args);
         }
 
         public async Task<Result> GenerateAcbAwbFiles(string inputAudioFile, int musicId, string title, string outputFolder)
@@ -97,5 +104,27 @@ namespace CustomFumenProviderWebServer.Services.Jacket
             });
             await musicSourceXml.SaveAsync(writer, default);
         }
+
+        /*
+        public async Task<Result> DumpWav(string acbFile, string outputWavFile)
+        {
+            var temp = Path.GetTempFileName();
+            File.Delete(temp);
+            Directory.CreateDirectory(temp);
+
+            File.Copy(acbFile, Path.Combine(temp,"audio.acb"));
+            File.Copy(acbFile, Path.Combine(temp, "audio.awb"));
+
+            using var proc = Process.Start("acb2wavs.exe", audioFilePath);
+            await proc.WaitForExitAsync();
+
+            var audioFolder = Path.GetDirectoryName(audioFilePath);
+            if (Directory.GetFiles(audioFolder, "dat_000000.wav", SearchOption.AllDirectories).FirstOrDefault() is string wavFile)
+            {
+                File.Move(wavFile, outputAudioFile, true);
+                return;
+            }
+        }
+        */
     }
 }

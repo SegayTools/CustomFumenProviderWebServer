@@ -1,7 +1,7 @@
 ﻿using CustomFumenProviderWebServer.Databases;
 using CustomFumenProviderWebServer.Models.Responses;
 using CustomFumenProviderWebServer.Models.Tables;
-using CustomFumenProviderWebServer.Services.Jacket;
+using CustomFumenProviderWebServer.Services;
 using CustomFumenProviderWebServer.Utils;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
@@ -16,7 +16,7 @@ namespace CustomFumenProviderWebServer.Controllers
 {
     [ApiController]
     [Route("fumen")]
-    [RequestSizeLimit(50_000_000)]
+    [RequestSizeLimit(300_000_000)]
     public partial class FumenController : ControllerBase
     {
         private readonly ILogger<FumenController> logger;
@@ -201,6 +201,10 @@ namespace CustomFumenProviderWebServer.Controllers
                 return new DeliverResultResponse(false, $"Generate FumenSet throw exception:{e.Message}");
             }
 
+            //step1.5: re-alloc new musicId
+            var newMusicId = set.MusicId + 20000;
+            set.MusicId = newMusicId;
+
             var musicIdStr = set.MusicId.ToString().PadLeft(4, '0');
 
             //step2: generate Jacket
@@ -248,6 +252,38 @@ namespace CustomFumenProviderWebServer.Controllers
                 var audioFolder = Path.Combine(optTempFolder, "musicsource", $"musicsource{musicIdStr}");
                 Directory.CreateDirectory(audioFolder);
 
+                if (audioFilePath.EndsWith(".zip"))
+                {
+                    using var fs = System.IO.File.OpenRead(audioFilePath);
+                    using var zip = new ZipArchive(fs, ZipArchiveMode.Read, true);
+                    var unpackFolder = Path.Combine(tempFolder, $"unpack.{Path.GetFileName(audioFilePath)}");
+                    Directory.CreateDirectory(unpackFolder);
+                    zip.ExtractToDirectory(unpackFolder);
+
+                    var zipFiles = Directory.GetFiles(unpackFolder);
+
+                    if (zipFiles.Length == 0)
+                        return new(false, "audio.zip not contains audio file."); //fuck
+
+                    //if audio.zip contains .acb(and .awb), copy them to opt/musicsource folder directly.
+                    if (zipFiles.FirstOrDefault(x => x.EndsWith(".acb")) is string acbFile)
+                    {
+                        var dstAcbFile = Path.Combine(audioFolder, $"music{musicIdStr}.acb");
+                        System.IO.File.Copy(acbFile, dstAcbFile);
+
+                        var dstAwbFile = Path.Combine(audioFolder, $"music{musicIdStr}.awb");
+                        var awbFile = Path.ChangeExtension(acbFile, ".awb");
+                        if (System.IO.File.Exists(awbFile))
+                            System.IO.File.Copy(awbFile, dstAwbFile);
+
+                        await audioService.GenerateMusicSourceXmlAsync(audioFolder, set.MusicId, set.Title);
+                        goto AUDIO_GENERATOR_SKIP;
+                    }
+
+                    //maybe audio.zip contains audio.wav/mp3?
+                    audioFilePath = zipFiles.FirstOrDefault();
+                }
+
                 var result = await audioService.GenerateAcbAwbFiles(audioFilePath, set.MusicId, set.Title, audioFolder);
                 if (!result.IsSuccess)
                     return new(false, "Generate audio failed:" + result.Message);
@@ -256,6 +292,7 @@ namespace CustomFumenProviderWebServer.Controllers
             {
                 return new DeliverResultResponse(false, $"Generate audio throw exception:{e.Message}");
             }
+        AUDIO_GENERATOR_SKIP:
 
             //step4: copy files.
             var fumenFolder = Path.Combine(optTempFolder, "music", $"music{musicIdStr}");

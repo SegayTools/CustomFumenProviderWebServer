@@ -4,7 +4,8 @@
     {
         public static string GetNewTempFolder()
         {
-            var path = Path.GetTempFileName().Replace(".", string.Empty);
+            var path = Path.GetTempFileName();
+            File.Delete(path);
             Directory.CreateDirectory(path);
             return path;
         }

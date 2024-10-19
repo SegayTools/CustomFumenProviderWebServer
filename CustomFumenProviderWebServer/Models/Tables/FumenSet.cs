@@ -32,6 +32,8 @@ namespace CustomFumenProviderWebServer.Models.Tables
         public int VersionId { get; set; }
         public string VersionName { get; set; }
 
+        public int SortOrder { get; set; }
+
         public virtual ICollection<FumenDifficult> FumenDifficults { get; set; } = new List<FumenDifficult>();
     }
 }
