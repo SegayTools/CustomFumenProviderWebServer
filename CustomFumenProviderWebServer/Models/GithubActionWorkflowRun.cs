@@ -9,5 +9,8 @@ namespace CustomFumenProviderWebServer.Models
 
         [JsonPropertyName("artifacts_url")]
         public string ArtifactsUrl { get; set; }
+
+        [JsonPropertyName("head_branch")]
+        public string HeadBranch { get; set; }
     }
 }

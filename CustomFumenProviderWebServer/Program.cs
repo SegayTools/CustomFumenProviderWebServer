@@ -1,5 +1,6 @@
 using CustomFumenProviderWebServer.Databases;
 using CustomFumenProviderWebServer.Services;
+using CustomFumenProviderWebServer.Services.Editor;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.FileProviders;
 using Microsoft.Extensions.Hosting;
@@ -43,6 +44,9 @@ namespace CustomFumenProviderWebServer
             builder.Services.AddSingleton<JacketService>();
             builder.Services.AddSingleton<MusicXmlService>();
             builder.Services.AddSingleton<AudioService>();
+
+            builder.Services.AddSingleton<IEditorService, EditorService>();
+            builder.Services.AddHostedService<EditorServiceUpdater>();
 
             //----------------------------------------------------------
 
