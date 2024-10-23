@@ -51,7 +51,7 @@ namespace CustomFumenProviderWebServer.Services
             return ProcessExec.Exec(binPath, args);
         }
 
-        public async Task<Result> GenerateAssetbundleJacket(string inputPngFile, bool isSmall, int width, int height, string outputFolder)
+        public async Task<Result> GenerateAssetbundleJacket(string inputPngFile, int width, int height, string outputFolder)
         {
             var args = new[] {
                 "--inputFiles", inputPngFile,

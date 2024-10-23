@@ -1,8 +1,10 @@
 ﻿using CustomFumenProviderWebServer.Databases;
+using CustomFumenProviderWebServer.Models;
 using CustomFumenProviderWebServer.Models.Responses;
 using CustomFumenProviderWebServer.Models.Tables;
 using CustomFumenProviderWebServer.Services;
 using CustomFumenProviderWebServer.Utils;
+using Microsoft.AspNetCore.Components.Forms;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using System;
@@ -232,12 +234,12 @@ namespace CustomFumenProviderWebServer.Controllers
                 Directory.CreateDirectory(assetsFolder);
 
                 rename(ref jacketFilePath, $"{musicIdStr}.png");
-                var result = await jacketService.GenerateAssetbundleJacket(jacketFilePath, false, 520, 520, assetsFolder);
+                var result = await jacketService.GenerateAssetbundleJacket(jacketFilePath, 520, 520, assetsFolder);
                 if (!result.IsSuccess)
                     return new(false, "Generate jacket failed:" + result.Message);
 
                 rename(ref jacketFilePath, $"{musicIdStr}_s.png");
-                result = await jacketService.GenerateAssetbundleJacket(jacketFilePath, true, 220, 220, assetsFolder);
+                result = await jacketService.GenerateAssetbundleJacket(jacketFilePath, 220, 220, assetsFolder);
                 if (!result.IsSuccess)
                     return new(false, "Generate jacket failed:" + result.Message);
             }
@@ -340,7 +342,6 @@ namespace CustomFumenProviderWebServer.Controllers
             {
                 using var fs = System.IO.File.OpenWrite(zipFile);
                 ZipFile.CreateFromDirectory(optTempFolder, fs, CompressionLevel.SmallestSize, false);
-                Directory.Delete(optTempFolder, true);
             });
 
             //step8: generate info.json
@@ -386,12 +387,8 @@ namespace CustomFumenProviderWebServer.Controllers
                     foreach (var deleteFilePath in Directory.GetFiles(storagePath))
                         System.IO.File.Delete(deleteFilePath);
                 }
-                foreach (var srcFilePath in Directory.GetFiles(generatedTempFolder))
-                {
-                    //move files
-                    var dstFilePath = Path.Combine(storagePath, Path.GetFileName(srcFilePath));
-                    System.IO.File.Copy(srcFilePath, dstFilePath, true);
-                }
+
+                FileUtils.CopyDirectory(generatedTempFolder, storagePath);
 
                 await trans.CommitAsync();
                 return new(true, "register successfully, waiting for pending", set);
@@ -400,6 +397,128 @@ namespace CustomFumenProviderWebServer.Controllers
             {
                 await trans.RollbackAsync();
                 return new(false, $"Register fumen data throw exception: {e.Message}");
+            }
+            finally
+            {
+                Directory.Delete(tempFolder, true);
+            }
+        }
+
+        async ValueTask<Result> ProcessJacketToFile(string inputFile, string outputFolder, int musicId)
+        {
+            var musicIdStr = musicId.ToString().PadLeft(4, '0');
+            var tempFolder = TempPathUtils.GetNewTempFolder();
+
+            try
+            {
+                if (await FileUtils.CheckFileSignature(inputFile, "UnityFS"))
+                {
+                    //dump as png file
+                    var inputABFile = Path.Combine(tempFolder, $"jacket.ab");
+                    System.IO.File.Copy(inputFile, inputABFile);
+                    var outputPngFile = Path.Combine(tempFolder, $"output.png");
+
+                    var dumpResult = await jacketService.DumpPngFromAssetbundle(inputABFile, outputPngFile);
+                    if (!dumpResult.IsSuccess)
+                        return new(false, $"convert .ab to .png failed: {dumpResult.Message}");
+                    inputFile = outputPngFile;
+                }
+
+                var assetsFolder = Path.Combine(outputFolder, "assets");
+                Directory.CreateDirectory(assetsFolder);
+
+                var pngFile = Path.Combine(tempFolder, $"{musicIdStr}.png");
+                var pngFileSmall = Path.Combine(tempFolder, $"{musicIdStr}_s.png");
+                System.IO.File.Copy(inputFile, pngFile, true);
+                System.IO.File.Copy(inputFile, pngFileSmall, true);
+
+                var result = await jacketService.GenerateAssetbundleJacket(pngFile, 520, 520, assetsFolder);
+                if (!result.IsSuccess)
+                    return new(false, "Generate jacket failed:" + result.Message);
+
+                result = await jacketService.GenerateAssetbundleJacket(pngFileSmall, 220, 220, assetsFolder);
+                if (!result.IsSuccess)
+                    return new(false, "Generate jacket small failed:" + result.Message);
+
+                return new(true);
+            }
+            catch (Exception e)
+            {
+                return new(false, $"Generate jacket throw exception:{e.Message}");
+            }
+            finally
+            {
+                Directory.Delete(tempFolder, true);
+            }
+        }
+
+        ValueTask<Result> ProcessFumenToFile(string ogkrFile, string outputFolder, int musicId, int diffIdx)
+        {
+            var musicIdStr = musicId.ToString().PadLeft(4, '0');
+            var diffIdxStr = musicId.ToString().PadLeft(2, '0');
+            var outputFile = Path.Combine(outputFolder, $"{musicIdStr}_{diffIdxStr}.ogkr");
+
+            try
+            {
+                System.IO.File.Copy(ogkrFile, outputFile, true);
+                return ValueTask.FromResult(new Result(true));
+            }
+            catch (Exception e)
+            {
+                return ValueTask.FromResult(new Result(false, $"Copy ogkr file throw exception:{e.Message}"));
+            }
+        }
+
+        async ValueTask<Result> ProcessAudioToFile(string inputFile, string outputFolder, int musicId, string title)
+        {
+            var musicIdStr = musicId.ToString().PadLeft(4, '0');
+            var tempFolder = TempPathUtils.GetNewTempFolder();
+
+            try
+            {
+                var audioFolder = Path.Combine(outputFolder, "musicsource", $"musicsource{musicIdStr}");
+                Directory.CreateDirectory(audioFolder);
+
+                if (inputFile.EndsWith(".zip"))
+                {
+                    using var fs = System.IO.File.OpenRead(inputFile);
+                    using var zip = new ZipArchive(fs, ZipArchiveMode.Read, true);
+                    var unpackFolder = Path.Combine(tempFolder, $"unpack.{Path.GetFileName(inputFile)}");
+                    Directory.CreateDirectory(unpackFolder);
+                    zip.ExtractToDirectory(unpackFolder);
+
+                    var zipFiles = Directory.GetFiles(unpackFolder);
+
+                    if (zipFiles.Length == 0)
+                        return new(false, "audio.zip not contains audio file."); //fuck
+
+                    //if audio.zip contains .acb(and .awb), copy them to opt/musicsource folder directly.
+                    if (zipFiles.FirstOrDefault(x => x.EndsWith(".acb")) is string acbFile)
+                    {
+                        var dstAcbFile = Path.Combine(audioFolder, $"music{musicIdStr}.acb");
+                        System.IO.File.Copy(acbFile, dstAcbFile);
+
+                        var dstAwbFile = Path.Combine(audioFolder, $"music{musicIdStr}.awb");
+                        var awbFile = Path.ChangeExtension(acbFile, ".awb");
+                        if (System.IO.File.Exists(awbFile))
+                            System.IO.File.Copy(awbFile, dstAwbFile);
+
+                        await audioService.GenerateMusicSourceXmlAsync(audioFolder, musicId, title);
+                        return new(true);
+                    }
+
+                    //maybe audio.zip contains audio.wav/mp3?
+                    inputFile = zipFiles.FirstOrDefault();
+                }
+
+                var result = await audioService.GenerateAcbAwbFiles(inputFile, musicId, title, audioFolder);
+                if (!result.IsSuccess)
+                    return new(false, "Generate audio failed:" + result.Message);
+                return new(true);
+            }
+            catch (Exception e)
+            {
+                return new(false, $"Generate audio throw exception:{e.Message}");
             }
             finally
             {

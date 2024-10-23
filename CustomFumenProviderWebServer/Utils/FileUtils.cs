@@ -24,5 +24,17 @@ namespace CustomFumenProviderWebServer.Utils
 
             return false;
         }
+
+        public static void CopyDirectory(string sourceDir, string destinationDir)
+        {
+            if (!Directory.Exists(destinationDir))
+                Directory.CreateDirectory(destinationDir);
+
+            foreach (string filePath in Directory.GetFiles(sourceDir))
+                File.Copy(filePath, Path.Combine(destinationDir, Path.GetFileName(filePath)), true);
+
+            foreach (string subDir in Directory.GetDirectories(sourceDir))
+                CopyDirectory(subDir, Path.Combine(destinationDir, Path.GetFileName(subDir)));
+        }
     }
 }
