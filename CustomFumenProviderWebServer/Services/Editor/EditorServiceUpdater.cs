@@ -18,7 +18,9 @@ namespace CustomFumenProviderWebServer.Services.Editor
         public EditorServiceUpdater(ILogger<EditorService> logger, IEditorService editorService)
         {
             httpClient = new HttpClient();
-            httpClient.DefaultRequestHeaders.Authorization = new("Bearer", "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");
+            var token = Environment.GetEnvironmentVariable("EDITOR_UPDATE_GITHUB_TOKEN");
+            if (!string.IsNullOrWhiteSpace(token))
+                httpClient.DefaultRequestHeaders.Authorization = new("Bearer", token);
             httpClient.DefaultRequestHeaders.UserAgent.ParseAdd("CSharpApp");
 
             this.logger = logger;
