@@ -475,11 +475,17 @@ namespace CustomFumenProviderWebServer.Controllers
                     return new(false, result.Message);
                 var set = result.Data;
 
-                if ((await db.FumenSets.FindAsync(set.MusicId)) is FumenSet cSet)
+                var publicState = PublishState.Pending;
+                if ((await db.FumenSets.FindAsync(musicId)) is FumenSet cSet)
                 {
+                    publicState = cSet.PublishState;
                     db.Remove(cSet);
                     await db.SaveChangesAsync();
                 }
+
+                set.MusicId = musicId;
+                set.PublishState = publicState;
+                set.UpdateTime = DateTime.Now;
 
                 db.Add(set);
                 await db.SaveChangesAsync();
@@ -529,6 +535,7 @@ namespace CustomFumenProviderWebServer.Controllers
                 var set = result.Data;
                 //modify musicId
                 set.MusicId = musicId;
+                set.UpdateTime = DateTime.Now;
 
                 var tempXmlFilePath = Path.Combine(tempFolder, "Music.xml");
                 var xmlFilePath = Path.Combine(fumenFolder, "Music.xml");

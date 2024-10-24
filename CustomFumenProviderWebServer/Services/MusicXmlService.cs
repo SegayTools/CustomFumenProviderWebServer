@@ -250,7 +250,7 @@ namespace CustomFumenProviderWebServer.Services
                             diff.TapCount++;
                             break;
                         case "FLK" or "CFK":
-                            diff.BulletCount++;
+                            diff.FlickCount++;
                             break;
                         case "BMS" or "OBS":
                             diff.BeamCount++;
