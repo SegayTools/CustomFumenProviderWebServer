@@ -611,7 +611,7 @@ namespace CustomFumenProviderWebServer.Controllers
         async ValueTask<Result> ProcessFumenToFile(string ogkrFile, int musicId, int diffIdx)
         {
             var musicIdStr = musicId.ToString().PadLeft(4, '0');
-            var diffIdxStr = musicId.ToString().PadLeft(2, '0');
+            var diffIdxStr = diffIdx.ToString().PadLeft(2, '0');
 
             var fumenFile = Path.Combine(fumenFolderPath, $"fumen{musicIdStr}", "opt", "music", $"music{musicIdStr}", $"{musicIdStr}_{diffIdxStr}.ogkr");
 
