@@ -526,10 +526,14 @@ namespace CustomFumenProviderWebServer.Controllers
                 if (!result.IsSuccess)
                     return new(false, result.Message);
 
+                var set = result.Data;
+                //modify musicId
+                set.MusicId = musicId;
+
                 var tempXmlFilePath = Path.Combine(tempFolder, "Music.xml");
                 var xmlFilePath = Path.Combine(fumenFolder, "Music.xml");
 
-                await musicXmlService.GenerateMusicXml(result.Data, tempXmlFilePath);
+                await musicXmlService.GenerateMusicXml(set, tempXmlFilePath);
                 System.IO.File.Copy(tempXmlFilePath, xmlFilePath, true);
                 await UpdateSetInfo(musicId);
                 return new(true);
@@ -833,9 +837,25 @@ namespace CustomFumenProviderWebServer.Controllers
                 return new(false, "no permission");
             }
 
+            MakeSureOptFolderExist(musicId);
+
             var result = await UpdateSetInfo(musicId);
 
             return result;
+        }
+
+        private void MakeSureOptFolderExist(int musicId)
+        {
+            var musicIdStr = musicId.ToString().PadLeft(4, '0');
+
+            var storagePath = Path.Combine(fumenFolderPath, $"fumen{musicIdStr}");
+            var optPath = Path.Combine(storagePath, "opt");
+            var zipPath = Path.Combine(storagePath, $"fumen{musicIdStr}.zip");
+
+            if (Directory.Exists(optPath))
+                return;
+            Directory.CreateDirectory(optPath);
+            ZipFile.ExtractToDirectory(zipPath, optPath, true);
         }
     }
 }

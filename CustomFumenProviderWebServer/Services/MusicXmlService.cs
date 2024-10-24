@@ -240,8 +240,37 @@ namespace CustomFumenProviderWebServer.Services
                         }
                     }
 
-                    if (isBpmSetup && isCreatorSetup)
-                        break;
+                    var cmd = line.Split('\t').FirstOrDefault();
+                    switch (cmd.ToUpper())
+                    {
+                        case "HLD" or "CHD" or "XHD":
+                            diff.HoldCount++;
+                            break;
+                        case "TAP" or "CTP" or "XTP":
+                            diff.TapCount++;
+                            break;
+                        case "FLK" or "CFK":
+                            diff.BulletCount++;
+                            break;
+                        case "BMS" or "OBS":
+                            diff.BeamCount++;
+                            break;
+                        case "BLT":
+                            diff.BulletCount++;
+                            break;
+                        case "BEL":
+                            diff.BellCount++;
+                            break;
+                        case "SFL":
+                            diff.SoflanCount++;
+                            break;
+                        case "BPM":
+                            diff.BpmCount++;
+                            break;
+                        case "MET":
+                            diff.MeterCount++;
+                            break;
+                    }
                 }
 
                 return new(true);

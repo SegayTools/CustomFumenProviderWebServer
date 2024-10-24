@@ -12,6 +12,26 @@ namespace CustomFumenProviderWebServer.Models.Tables
         public float Bpm { get; set; }
         public string Creator { get; set; }
 
+        public int BellCount { get; set; }
+
+        public int FlickCount { get; set; }
+
+        public int HoldCount { get; set; }
+
+        public int TapCount { get; set; }
+
+        public int BulletCount { get; set; }
+
+        public int SoflanCount { get; set; }
+
+        public int BpmCount { get; set; }
+
+        public int MeterCount { get; set; }
+
+        public int BeamCount { get; set; }
+
+
+
         [JsonInclude]
         public string DifficultName => DifficultIndex switch
         {
