@@ -1,6 +1,7 @@
 using CustomFumenProviderWebServer.Databases;
 using CustomFumenProviderWebServer.Services;
 using CustomFumenProviderWebServer.Services.Editor;
+using Microsoft.AspNetCore.StaticFiles;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.FileProviders;
 using Microsoft.Extensions.Hosting;
@@ -56,13 +57,18 @@ namespace CustomFumenProviderWebServer
             await CheckDBMigrations<FumenDataDB>(app.Services);
 
             app.UseHttpsRedirection();
-            app.UseStaticFiles();
+
+            var provider = new FileExtensionContentTypeProvider();
+            provider.Mappings.Remove(string.Empty);
 
             app.UseStaticFiles(new StaticFileOptions()
             {
                 FileProvider = new PhysicalFileProvider(fumenFolderPath),
+                ContentTypeProvider = provider,
+                ServeUnknownFileTypes = true,
                 RequestPath = "/files",
             });
+
             app.UseDirectoryBrowser(new DirectoryBrowserOptions()
             {
                 FileProvider = new PhysicalFileProvider(fumenFolderPath),

@@ -95,8 +95,6 @@ namespace CustomFumenProviderWebServer.Services.Editor
                         }
                     }
                 }
-
-                logger.LogError($"Can't fetch latest editor zip from github action, requireMasterBranch:{requireMasterBranch}");
             }
             catch (Exception e)
             {
