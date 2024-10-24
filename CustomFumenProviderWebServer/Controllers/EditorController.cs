@@ -22,7 +22,7 @@ namespace CustomFumenProviderWebServer.Controllers
 
         [Route("get")]
         [HttpGet]
-        public IActionResult Get(bool requireMasterBranch = false)
+        public IActionResult Get(bool requireMasterBranch = true)
         {
             var editorResource = editorService.GetEditorResource(requireMasterBranch);
 
@@ -34,7 +34,7 @@ namespace CustomFumenProviderWebServer.Controllers
 
         [Route("getVersionInfo")]
         [HttpGet]
-        public IActionResult GetVersionInfo(bool requireMasterBranch = false)
+        public IActionResult GetVersionInfo(bool requireMasterBranch = true)
         {
             var editorResource = editorService.GetEditorResource(requireMasterBranch);
 

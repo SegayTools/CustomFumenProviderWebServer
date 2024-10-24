@@ -7,6 +7,7 @@ namespace CustomFumenProviderWebServer.Databases
     {
         public DbSet<FumenSet> FumenSets { get; set; }
         public DbSet<FumenDifficult> FumenDifficults { get; set; }
+        public DbSet<FumenOwner> FumenOwners { get; set; }
 
         public FumenDataDB(DbContextOptions<FumenDataDB> options) : base(options)
         {
@@ -29,6 +30,9 @@ namespace CustomFumenProviderWebServer.Databases
 
             modelBuilder.Entity<FumenDifficult>()
                 .HasKey(fd => new { fd.MusicId, fd.DifficultIndex });
+
+            modelBuilder.Entity<FumenOwner>()
+                .HasKey(fd => new { fd.MusicId });
         }
 
         protected override void OnConfiguring(DbContextOptionsBuilder optionsBuilder)

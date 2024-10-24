@@ -11,6 +11,8 @@ using System;
 using System.Buffers;
 using System.IO.Compression;
 using System.Linq.Expressions;
+using System.Security.Cryptography;
+using System.Text;
 using System.Text.Json;
 using System.Xml.Linq;
 
@@ -27,6 +29,8 @@ namespace CustomFumenProviderWebServer.Controllers
         private readonly JacketService jacketService;
         private readonly MusicXmlService musicXmlService;
         private readonly string fumenFolderPath;
+        private readonly SHA256 sha256 = SHA256.Create();
+
         private static readonly JsonSerializerOptions jsonSerializerOptions = new JsonSerializerOptions()
         {
             WriteIndented = true,
@@ -123,6 +127,8 @@ namespace CustomFumenProviderWebServer.Controllers
         /// 投稿自制谱, 并等待审核
         /// 注意: 上传Body限制50M大小
         /// </summary>
+        /// <param name="contract">上传者联系方式</param>
+        /// <param name="password">谱面密码，后续更新谱面内容需要用到</param>
         /// <param name="jacketFormFile">谱面封面文件 (.png/assetbundle)</param>
         /// <param name="audioFormFile">谱面音频文件 (.wav/mp3)</param>
         /// <param name="musicXmlFormFile">谱面歌曲信息文件 (Music.xml)</param>
@@ -135,6 +141,8 @@ namespace CustomFumenProviderWebServer.Controllers
         [Route("deliverFumen")]
         [HttpPost]
         public async Task<DeliverResultResponse> DeliverFumen(
+            string contract,
+            string password,
             IFormFile jacketFormFile,
             IFormFile audioFormFile,
             IFormFile musicXmlFormFile,
@@ -146,14 +154,7 @@ namespace CustomFumenProviderWebServer.Controllers
             IFormFile lucOgkrFormFile
             )
         {
-            async Task downloadToFile(string saveFilePath, IFormFile file)
-            {
-                if (file is null)
-                    return;
-                var formStream = file.OpenReadStream();
-                using var fs = System.IO.File.OpenWrite(saveFilePath);
-                await formStream.CopyToAsync(fs);
-            }
+            using var db = await fumenDataDBFactory.CreateDbContextAsync();
 
             if (jacketFormFile is null)
                 return new(false, "jacket file is not upload.");
@@ -161,6 +162,10 @@ namespace CustomFumenProviderWebServer.Controllers
                 return new(false, "audio file is not upload.");
             if (musicXmlFormFile is null)
                 return new(false, "Music.xml file is not upload.");
+            if (string.IsNullOrWhiteSpace(password))
+                return new(false, "password is empty");
+            if (string.IsNullOrWhiteSpace(contract))
+                return new(false, "contract is empty");
 
             var tempFolder = TempPathUtils.GetNewTempFolder();
             var jacketFilePath = Path.Combine(tempFolder, $"jacket" + Path.GetExtension(jacketFormFile.FileName));
@@ -178,15 +183,16 @@ namespace CustomFumenProviderWebServer.Controllers
             var optTempFolder = Path.Combine(generatedTempFolder, "opt");
             Directory.CreateDirectory(optTempFolder);
 
+            //download others
             await Task.WhenAll([
-                downloadToFile(jacketFilePath,jacketFormFile),
-                downloadToFile(audioFilePath,audioFormFile),
-                downloadToFile(bscOgkrFilePath,bscOgkrFormFile),
-                downloadToFile(advOgkrFilePath,advOgkrFormFile),
-                downloadToFile(expOgkrFilePath,expOgkrFormFile),
-                downloadToFile(mstOgkrFilePath,mstOgkrFormFile),
-                downloadToFile(lucOgkrFilePath,lucOgkrFormFile),
-                downloadToFile(xmlFilePath,musicXmlFormFile),
+                DownloadFormFile(jacketFilePath,jacketFormFile),
+                DownloadFormFile(audioFilePath,audioFormFile),
+                DownloadFormFile(bscOgkrFilePath,bscOgkrFormFile),
+                DownloadFormFile(advOgkrFilePath,advOgkrFormFile),
+                DownloadFormFile(expOgkrFilePath,expOgkrFormFile),
+                DownloadFormFile(mstOgkrFilePath,mstOgkrFormFile),
+                DownloadFormFile(lucOgkrFilePath,lucOgkrFormFile),
+                DownloadFormFile(xmlFilePath, musicXmlFormFile)
                 ]);
 
             //step1: generate FumenSet
@@ -206,6 +212,9 @@ namespace CustomFumenProviderWebServer.Controllers
             //step1.5: re-alloc new musicId
             var newMusicId = set.MusicId + 20000;
             set.MusicId = newMusicId;
+
+            if ((await db.FumenSets.FindAsync(newMusicId)) is not null)
+                return new(false, "musicId is conflict.");
 
             var musicIdStr = set.MusicId.ToString().PadLeft(4, '0');
 
@@ -358,10 +367,15 @@ namespace CustomFumenProviderWebServer.Controllers
             }
 
             //step9: register in database
-            set.PublishState = Models.PublishState.Pending;
+            set.PublishState = PublishState.Pending;
             set.UpdateTime = DateTime.Now;
+            set.Owner = new FumenOwner()
+            {
+                MusicId = newMusicId,
+                Contact = contract,
+                PasswordHash = Convert.ToHexString(sha256.ComputeHash(Encoding.UTF8.GetBytes(password)))
+            };
 
-            using var db = await fumenDataDBFactory.CreateDbContextAsync();
             using var trans = await db.Database.BeginTransactionAsync();
 
             try
@@ -404,10 +418,139 @@ namespace CustomFumenProviderWebServer.Controllers
             }
         }
 
-        async ValueTask<Result> ProcessJacketToFile(string inputFile, string outputFolder, int musicId)
+        async ValueTask<Result> UpdateZipFile(int musicId)
         {
             var musicIdStr = musicId.ToString().PadLeft(4, '0');
             var tempFolder = TempPathUtils.GetNewTempFolder();
+
+            var storagePath = Path.Combine(fumenFolderPath, $"fumen{musicIdStr}");
+            var optPath = Path.Combine(storagePath, "opt");
+
+            try
+            {
+                var tempZipFile = Path.Combine(tempFolder, $"fumen{musicIdStr}.zip");
+                var zipFile = Path.Combine(storagePath, $"fumen{musicIdStr}.zip");
+                await Task.Run(() =>
+                {
+                    using var fs = System.IO.File.OpenWrite(tempZipFile);
+                    ZipFile.CreateFromDirectory(optPath, fs, CompressionLevel.SmallestSize, false);
+                });
+
+                System.IO.File.Move(tempZipFile, zipFile, true);
+
+                return new(true);
+            }
+            catch (Exception e)
+            {
+                return new(false, $"Generate .zip throw exception:{e.Message}");
+            }
+            finally
+            {
+                Directory.Delete(tempFolder, true);
+            }
+        }
+
+        async ValueTask<Result> UpdateSetInfo(int musicId)
+        {
+            var musicIdStr = musicId.ToString().PadLeft(4, '0');
+            var tempFolder = TempPathUtils.GetNewTempFolder();
+
+            var storagePath = Path.Combine(fumenFolderPath, $"fumen{musicIdStr}");
+            var optPath = Path.Combine(storagePath, "opt");
+
+            using var db = await fumenDataDBFactory.CreateDbContextAsync();
+            using var trans = await db.Database.BeginTransactionAsync();
+
+            try
+            {
+                var xmlFile = Path.Combine(optPath, "music", $"music{musicIdStr}", "Music.xml");
+                var bscFile = Path.Combine(optPath, "music", $"music{musicIdStr}", $"{musicIdStr}_00.ogkr");
+                var advFile = Path.Combine(optPath, "music", $"music{musicIdStr}", $"{musicIdStr}_01.ogkr");
+                var expFile = Path.Combine(optPath, "music", $"music{musicIdStr}", $"{musicIdStr}_02.ogkr");
+                var mstFile = Path.Combine(optPath, "music", $"music{musicIdStr}", $"{musicIdStr}_03.ogkr");
+                var lucFile = Path.Combine(optPath, "music", $"music{musicIdStr}", $"{musicIdStr}_04.ogkr");
+
+                var result = await musicXmlService.GenerateFumenSet(xmlFile, bscFile, advFile, expFile, mstFile, lucFile);
+                if (!result.IsSuccess)
+                    return new(false, result.Message);
+                var set = result.Data;
+
+                if ((await db.FumenSets.FindAsync(set.MusicId)) is FumenSet cSet)
+                {
+                    db.Remove(cSet);
+                    await db.SaveChangesAsync();
+                }
+
+                db.Add(set);
+                await db.SaveChangesAsync();
+
+                var tempJsonFile = Path.Combine(tempFolder, $"info.json");
+                var jsonFile = Path.Combine(storagePath, $"info.json");
+                {
+                    using var fs = System.IO.File.OpenWrite(tempJsonFile);
+                    await JsonSerializer.SerializeAsync(fs, set, jsonSerializerOptions);
+                }
+
+                System.IO.File.Move(tempJsonFile, jsonFile, true);
+
+                await trans.CommitAsync();
+                return new(true);
+            }
+            catch (Exception e)
+            {
+                await trans.RollbackAsync();
+                return new(false, $"Update FumenSet throw exception:{e.Message}");
+            }
+            finally
+            {
+                Directory.Delete(tempFolder, true);
+            }
+        }
+
+        async ValueTask<Result> ProcessMusicXmlToFile(string inputXmlFile, int musicId)
+        {
+            var musicIdStr = musicId.ToString().PadLeft(4, '0');
+            var tempFolder = TempPathUtils.GetNewTempFolder();
+
+            var storagePath = Path.Combine(fumenFolderPath, $"fumen{musicIdStr}");
+            var fumenFolder = Path.Combine(storagePath, "opt", "music", $"music{musicIdStr}");
+
+            try
+            {
+                var bscFile = Path.Combine(fumenFolder, $"{musicIdStr}_00.ogkr");
+                var advFile = Path.Combine(fumenFolder, $"{musicIdStr}_01.ogkr");
+                var expFile = Path.Combine(fumenFolder, $"{musicIdStr}_02.ogkr");
+                var mstFile = Path.Combine(fumenFolder, $"{musicIdStr}_03.ogkr");
+                var lucFile = Path.Combine(fumenFolder, $"{musicIdStr}_04.ogkr");
+                var result = await musicXmlService.GenerateFumenSet(inputXmlFile, bscFile, advFile, expFile, mstFile, lucFile);
+                if (!result.IsSuccess)
+                    return new(false, result.Message);
+
+                var tempXmlFilePath = Path.Combine(tempFolder, "Music.xml");
+                var xmlFilePath = Path.Combine(fumenFolder, "Music.xml");
+
+                await musicXmlService.GenerateMusicXml(result.Data, tempXmlFilePath);
+                System.IO.File.Copy(tempXmlFilePath, xmlFilePath, true);
+                await UpdateSetInfo(musicId);
+                return new(true);
+            }
+            catch (Exception e)
+            {
+                return new(false, $"Copy fumen files throw exception:{e.Message}");
+            }
+            finally
+            {
+                Directory.Delete(tempFolder, true);
+            }
+        }
+
+        async ValueTask<Result> ProcessJacketToFile(string inputFile, int musicId)
+        {
+            var musicIdStr = musicId.ToString().PadLeft(4, '0');
+            var tempFolder = TempPathUtils.GetNewTempFolder();
+
+            var storagePath = Path.Combine(fumenFolderPath, $"fumen{musicIdStr}");
+            var assetsFolder = Path.Combine(storagePath, "opt", "assets");
 
             try
             {
@@ -424,7 +567,6 @@ namespace CustomFumenProviderWebServer.Controllers
                     inputFile = outputPngFile;
                 }
 
-                var assetsFolder = Path.Combine(outputFolder, "assets");
                 Directory.CreateDirectory(assetsFolder);
 
                 var pngFile = Path.Combine(tempFolder, $"{musicIdStr}.png");
@@ -440,6 +582,9 @@ namespace CustomFumenProviderWebServer.Controllers
                 if (!result.IsSuccess)
                     return new(false, "Generate jacket small failed:" + result.Message);
 
+                pngFile = Path.Combine(storagePath, "jacket.png");
+                System.IO.File.Copy(inputFile, pngFile, true);
+
                 return new(true);
             }
             catch (Exception e)
@@ -452,31 +597,34 @@ namespace CustomFumenProviderWebServer.Controllers
             }
         }
 
-        ValueTask<Result> ProcessFumenToFile(string ogkrFile, string outputFolder, int musicId, int diffIdx)
+        async ValueTask<Result> ProcessFumenToFile(string ogkrFile, int musicId, int diffIdx)
         {
             var musicIdStr = musicId.ToString().PadLeft(4, '0');
             var diffIdxStr = musicId.ToString().PadLeft(2, '0');
-            var outputFile = Path.Combine(outputFolder, $"{musicIdStr}_{diffIdxStr}.ogkr");
+
+            var fumenFile = Path.Combine(fumenFolderPath, $"fumen{musicIdStr}", "opt", "music", $"music{musicIdStr}", $"{musicIdStr}_{diffIdxStr}.ogkr");
 
             try
             {
-                System.IO.File.Copy(ogkrFile, outputFile, true);
-                return ValueTask.FromResult(new Result(true));
+                System.IO.File.Copy(ogkrFile, fumenFile, true);
+                await UpdateSetInfo(musicId);
+                return new Result(true);
             }
             catch (Exception e)
             {
-                return ValueTask.FromResult(new Result(false, $"Copy ogkr file throw exception:{e.Message}"));
+                return new Result(false, $"Copy ogkr file throw exception:{e.Message}");
             }
         }
 
-        async ValueTask<Result> ProcessAudioToFile(string inputFile, string outputFolder, int musicId, string title)
+        async ValueTask<Result> ProcessAudioToFile(string inputFile, int musicId, string title)
         {
             var musicIdStr = musicId.ToString().PadLeft(4, '0');
             var tempFolder = TempPathUtils.GetNewTempFolder();
 
+            var audioFolder = Path.Combine(fumenFolderPath, $"fumen{musicIdStr}", "opt", "musicsource", $"musicsource{musicIdStr}");
+
             try
             {
-                var audioFolder = Path.Combine(outputFolder, "musicsource", $"musicsource{musicIdStr}");
                 Directory.CreateDirectory(audioFolder);
 
                 if (inputFile.EndsWith(".zip"))
@@ -524,6 +672,170 @@ namespace CustomFumenProviderWebServer.Controllers
             {
                 Directory.Delete(tempFolder, true);
             }
+        }
+
+        async Task DownloadFormFile(string saveFilePath, IFormFile file)
+        {
+            if (file is null)
+                return;
+            var formStream = file.OpenReadStream();
+            using var fs = System.IO.File.OpenWrite(saveFilePath);
+            await formStream.CopyToAsync(fs);
+        }
+
+        async ValueTask<bool> VerifyPermission(string password, int? musicId = null)
+        {
+            using var db = await fumenDataDBFactory.CreateDbContextAsync();
+            var hash = Convert.ToHexString(sha256.ComputeHash(Encoding.UTF8.GetBytes(password)));
+
+            if ("D7969812349992B265133AA1AA39BB82A7D5C9A3294C9ABDB337204C5CDE580F" == hash)
+                return true;
+
+            if (musicId is not int id)
+                return false;
+
+            if ((await db.FumenOwners.FindAsync(id)) is FumenOwner owner)
+                return hash == owner.PasswordHash;
+
+            return false;
+        }
+
+        /// <summary>
+        /// 更新封面文件
+        /// </summary>
+        /// <param name="jacketFormFile">.png或assetbundle图片文件</param>
+        /// <param name="musicId">谱面公开musicId, 比如22857</param>
+        /// <param name="password">谱面上传时用的密码</param>
+        /// <returns></returns>
+        [HttpPost]
+        [Route("update/jacket")]
+        public async Task<Result> UpdateJacket(IFormFile jacketFormFile, int musicId, string password)
+        {
+            if (!await VerifyPermission(password, musicId))
+            {
+                HttpContext.Response.StatusCode = 403;
+                return new(false, "no permission");
+            }
+
+            var tmpFile = Path.GetTempFileName();
+            await DownloadFormFile(tmpFile, jacketFormFile);
+
+            var result = await ProcessJacketToFile(tmpFile, musicId);
+            if (!result.IsSuccess)
+                return result;
+
+            result = await UpdateZipFile(musicId);
+            return result;
+        }
+
+        /// <summary>
+        /// 更新谱面音频文件
+        /// </summary>
+        /// <param name="audioFormFile">.wav音频文件</param>
+        /// <param name="musicId">谱面公开musicId, 比如22857</param>
+        /// <param name="password">谱面上传时用的密码</param>
+        /// <returns></returns>
+        [HttpPost]
+        [Route("update/audio")]
+        public async Task<Result> UpdateAudio(IFormFile audioFormFile, int musicId, string password)
+        {
+            if (!await VerifyPermission(password, musicId))
+            {
+                HttpContext.Response.StatusCode = 403;
+                return new(false, "no permission");
+            }
+
+            var tmpFile = Path.GetTempFileName();
+            await DownloadFormFile(tmpFile, audioFormFile);
+
+            using var db = await fumenDataDBFactory.CreateDbContextAsync();
+            if ((await db.FumenSets.FindAsync(musicId)) is not FumenSet set)
+                return new(false, "FumenSet not found");
+
+            var result = await ProcessAudioToFile(tmpFile, musicId, set.Title);
+            if (!result.IsSuccess)
+                return result;
+
+            result = await UpdateZipFile(musicId);
+            return result;
+        }
+
+        /// <summary>
+        /// 更新谱面的Music.xml
+        /// </summary>
+        /// <param name="xmlFormFile">Music.xml文件</param>
+        /// <param name="musicId">谱面公开musicId, 比如22857</param>
+        /// <param name="password">谱面上传时用的密码</param>
+        /// <returns></returns>
+        [HttpPost]
+        [Route("update/xml")]
+        public async Task<Result> UpdateMusicXml(IFormFile xmlFormFile, int musicId, string password)
+        {
+            if (!await VerifyPermission(password, musicId))
+            {
+                HttpContext.Response.StatusCode = 403;
+                return new(false, "no permission");
+            }
+
+            var tmpFile = Path.GetTempFileName();
+            await DownloadFormFile(tmpFile, xmlFormFile);
+
+            var result = await ProcessMusicXmlToFile(tmpFile, musicId);
+            if (!result.IsSuccess)
+                return result;
+
+            result = await UpdateZipFile(musicId);
+            return result;
+        }
+
+        /// <summary>
+        /// 更新谱面文件
+        /// </summary>
+        /// <param name="ogkrFormFile">.ogkr谱面文件</param>
+        /// <param name="diffIdx">谱面难度, 0绿谱/1黄谱/2红谱/3紫谱/4白谱</param>
+        /// <param name="musicId">谱面公开musicId, 比如22857</param>
+        /// <param name="password">谱面上传时用的密码</param>
+        /// <returns></returns>
+        [HttpPost]
+        [Route("update/ogkr")]
+        public async Task<Result> UpdateOgkrFumen(IFormFile ogkrFormFile, int diffIdx, int musicId, string password)
+        {
+            if (!await VerifyPermission(password, musicId))
+            {
+                HttpContext.Response.StatusCode = 403;
+                return new(false, "no permission");
+            }
+
+            var tmpFile = Path.GetTempFileName();
+            await DownloadFormFile(tmpFile, ogkrFormFile);
+
+            var result = await ProcessFumenToFile(tmpFile, musicId, diffIdx);
+            if (!result.IsSuccess)
+                return result;
+
+            result = await UpdateZipFile(musicId);
+            return result;
+        }
+
+        /// <summary>
+        /// 手动更新info.json
+        /// </summary>
+        /// <param name="musicId">谱面公开musicId, 比如22857</param>
+        /// <param name="password">谱面上传时用的密码</param>
+        /// <returns></returns>
+        [HttpPost]
+        [Route("update/info")]
+        public async Task<Result> UpdateSetInfo(int musicId, string password)
+        {
+            if (!await VerifyPermission(password, musicId))
+            {
+                HttpContext.Response.StatusCode = 403;
+                return new(false, "no permission");
+            }
+
+            var result = await UpdateSetInfo(musicId);
+
+            return result;
         }
     }
 }

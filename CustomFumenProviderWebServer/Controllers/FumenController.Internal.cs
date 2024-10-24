@@ -23,7 +23,7 @@ namespace CustomFumenProviderWebServer.Controllers
         [Route("publishFumen")]
         public async Task<FumenUploadResponse> PublishFumen([FromForm] int musicId, [FromForm] string password)
         {
-            if (!CheckPermission(password))
+            if (!await VerifyPermission(password))
             {
                 HttpContext.Response.StatusCode = 403;
                 return new(false, "no permission");
@@ -61,7 +61,7 @@ namespace CustomFumenProviderWebServer.Controllers
         [Route("remove")]
         public async Task<FumenUploadResponse> Remove([FromForm] int musicId, [FromForm] string password)
         {
-            if (!CheckPermission(password))
+            if (!await VerifyPermission(password))
             {
                 HttpContext.Response.StatusCode = 403;
                 return new(false, "no permission");
@@ -89,12 +89,5 @@ namespace CustomFumenProviderWebServer.Controllers
             }
         }
 
-        private SHA256 sha256 = SHA256.Create();
-
-        private bool CheckPermission(string password)
-        {
-            return Convert.ToHexString(sha256.ComputeHash(Encoding.UTF8.GetBytes(password)))
-                == "D7969812349992B265133AA1AA39BB82A7D5C9A3294C9ABDB337204C5CDE580F";
-        }
     }
 }

@@ -1,5 +1,6 @@
 ﻿using System.ComponentModel.DataAnnotations;
 using System.ComponentModel.DataAnnotations.Schema;
+using System.Text.Json.Serialization;
 
 namespace CustomFumenProviderWebServer.Models.Tables
 {
@@ -35,5 +36,8 @@ namespace CustomFumenProviderWebServer.Models.Tables
         public int SortOrder { get; set; }
 
         public virtual ICollection<FumenDifficult> FumenDifficults { get; set; } = new List<FumenDifficult>();
+
+        [JsonIgnore]
+        public virtual FumenOwner Owner { get; set; }
     }
 }
