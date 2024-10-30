@@ -1,6 +1,8 @@
 using CustomFumenProviderWebServer.Databases;
 using CustomFumenProviderWebServer.Services;
+using CustomFumenProviderWebServer.Services.CacheManager;
 using CustomFumenProviderWebServer.Services.Editor;
+using CustomFumenProviderWebServer.Services.FileCacheList;
 using Microsoft.AspNetCore.StaticFiles;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.FileProviders;
@@ -48,6 +50,9 @@ namespace CustomFumenProviderWebServer
 
             builder.Services.AddSingleton<IEditorService, EditorService>();
             builder.Services.AddHostedService<EditorServiceUpdater>();
+
+            builder.Services.AddSingleton<IFileCacheListService, FileCacheListService>();
+            builder.Services.AddHostedService<FileCacheListUpdater>();
 
             //----------------------------------------------------------
 

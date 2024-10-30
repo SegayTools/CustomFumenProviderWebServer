@@ -209,6 +209,9 @@ namespace CustomFumenProviderWebServer.Controllers
                 return new DeliverResultResponse(false, $"Generate FumenSet throw exception:{e.Message}");
             }
 
+            if (set.MusicId > 9999 || set.MusicId <= 0)
+                return new DeliverResultResponse(false, $"Music.xml provide musicId > 9999");
+
             //step1.5: re-alloc new musicId
             var newMusicId = set.MusicId + 20000;
             set.MusicId = newMusicId;
@@ -608,6 +611,37 @@ namespace CustomFumenProviderWebServer.Controllers
             }
         }
 
+        private async ValueTask<Result> UpdateInfoJsonUpdateTime(int musicId)
+        {
+            var musicIdStr = musicId.ToString().PadLeft(4, '0');
+            var storagePath = Path.Combine(fumenFolderPath, $"fumen{musicIdStr}");
+
+            using var db = await fumenDataDBFactory.CreateDbContextAsync();
+            using var trans = await db.Database.BeginTransactionAsync();
+
+            try
+            {
+                if ((await db.FumenSets.FindAsync(musicId)) is FumenSet set)
+                {
+                    set.UpdateTime = DateTime.Now;
+                    await db.SaveChangesAsync();
+
+                    var jsonFile = Path.Combine(storagePath, $"info.json");
+                    {
+                        using var fs = System.IO.File.OpenWrite(jsonFile);
+                        await JsonSerializer.SerializeAsync(fs, set, jsonSerializerOptions);
+                    }
+                    await trans.CommitAsync();
+                }
+                return new(true);
+            }
+            catch (Exception e)
+            {
+                trans.Rollback();
+                return new(false, $"update set and info.json throw exception: {e.Message}");
+            }
+        }
+
         async ValueTask<Result> ProcessFumenToFile(string ogkrFile, int musicId, int diffIdx)
         {
             var musicIdStr = musicId.ToString().PadLeft(4, '0');
@@ -618,8 +652,7 @@ namespace CustomFumenProviderWebServer.Controllers
             try
             {
                 System.IO.File.Copy(ogkrFile, fumenFile, true);
-                await UpdateSetInfo(musicId);
-                return new Result(true);
+                return await UpdateSetInfo(musicId);
             }
             catch (Exception e)
             {
@@ -673,6 +706,7 @@ namespace CustomFumenProviderWebServer.Controllers
                 var result = await audioService.GenerateAcbAwbFiles(inputFile, musicId, title, audioFolder);
                 if (!result.IsSuccess)
                     return new(false, "Generate audio failed:" + result.Message);
+
                 return new(true);
             }
             catch (Exception e)
@@ -736,7 +770,9 @@ namespace CustomFumenProviderWebServer.Controllers
                 return result;
 
             result = await UpdateZipFile(musicId);
-            return result;
+            if (!result.IsSuccess)
+                return result;
+            return await UpdateInfoJsonUpdateTime(musicId);
         }
 
         /// <summary>
@@ -768,7 +804,10 @@ namespace CustomFumenProviderWebServer.Controllers
                 return result;
 
             result = await UpdateZipFile(musicId);
-            return result;
+            if (!result.IsSuccess)
+                return result;
+
+            return await UpdateInfoJsonUpdateTime(musicId);
         }
 
         /// <summary>
