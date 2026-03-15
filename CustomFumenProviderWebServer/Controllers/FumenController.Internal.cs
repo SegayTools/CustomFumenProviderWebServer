@@ -18,7 +18,8 @@ namespace CustomFumenProviderWebServer.Controllers
         /// 审核通过,公开谱面
         /// </summary>
         /// <param name="musicId">要公开谱面的musicId</param>
-        /// <returns></returns>
+        /// <param name="password">管理员审核密码</param>
+        /// <returns>公开操作结果</returns>
         [HttpPost]
         [Route("publishFumen")]
         public async Task<FumenUploadResponse> PublishFumen([FromForm] int musicId, [FromForm] string password)
@@ -56,7 +57,8 @@ namespace CustomFumenProviderWebServer.Controllers
         /// 删除 谱面
         /// </summary>
         /// <param name="musicId">要删除谱面的musicId</param>
-        /// <returns></returns>
+        /// <param name="password">管理员审核密码</param>
+        /// <returns>删除操作结果</returns>
         [HttpDelete]
         [Route("remove")]
         public async Task<FumenUploadResponse> Remove([FromForm] int musicId, [FromForm] string password)

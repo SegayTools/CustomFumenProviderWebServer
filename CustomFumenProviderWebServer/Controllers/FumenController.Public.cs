@@ -54,9 +54,9 @@ namespace CustomFumenProviderWebServer.Controllers
         /// <param name="countPerPage">每一页显示多少个谱面</param>
         /// <param name="genre">需要过滤显示的分类，null则表示不过滤</param>
         /// <param name="order">需要排序的字段，null表示不排序</param>
-        /// <param name="minFilterLevel"></param>
-        /// <param name="maxFilterLevel"></param>
-        /// <returns></returns>
+        /// <param name="minFilterLevel">最低定数过滤（可选）</param>
+        /// <param name="maxFilterLevel">最高定数过滤（可选）</param>
+        /// <returns>分页后的谱面列表与总数</returns>
         [Route("list")]
         [HttpGet]
         public async Task<FumenQueryResponse> List(int pageIdx, int countPerPage, string genre = null, string order = null, float? minFilterLevel = null, float? maxFilterLevel = null)
@@ -105,10 +105,10 @@ namespace CustomFumenProviderWebServer.Controllers
         /// <summary>
         /// 获取(正在审核的)谱面列表
         /// </summary>
-        /// <param name="pageIdx"></param>
-        /// <param name="countPerPage"></param>
+        /// <param name="pageIdx">页号 (从0开始)</param>
+        /// <param name="countPerPage">每一页显示多少个谱面</param>
         /// <param name="contract">上传者联系方式，null/空字符串表示不过滤</param>
-        /// <returns></returns>
+        /// <returns>分页后的待审核谱面列表与总数</returns>
         [Route("listPending")]
         [HttpGet]
         public async Task<FumenQueryResponse> ListPending(int pageIdx, int countPerPage, string contract = null)
@@ -148,7 +148,7 @@ namespace CustomFumenProviderWebServer.Controllers
         /// <param name="expOgkrFormFile">(可选)谱面Expert文件 (.ogkr)</param>
         /// <param name="mstOgkrFormFile">(可选)谱面Master文件 (.ogkr)</param>
         /// <param name="lucOgkrFormFile">(可选)谱面Lunatic文件 (.ogkr)</param>
-        /// <returns></returns>
+        /// <returns>投稿处理结果，成功时包含创建的谱面信息</returns>
         [Route("deliverFumen")]
         [HttpPost]
         public async Task<DeliverResultResponse> DeliverFumen(
@@ -762,7 +762,7 @@ namespace CustomFumenProviderWebServer.Controllers
         /// <param name="jacketFormFile">.png或assetbundle图片文件</param>
         /// <param name="musicId">谱面公开musicId, 比如22857</param>
         /// <param name="password">谱面上传时用的密码</param>
-        /// <returns></returns>
+        /// <returns>封面更新结果</returns>
         [HttpPost]
         [Route("update/jacket")]
         public async Task<Result> UpdateJacket(IFormFile jacketFormFile, int musicId, string password)
@@ -792,7 +792,7 @@ namespace CustomFumenProviderWebServer.Controllers
         /// <param name="audioFormFile">.wav音频文件</param>
         /// <param name="musicId">谱面公开musicId, 比如22857</param>
         /// <param name="password">谱面上传时用的密码</param>
-        /// <returns></returns>
+        /// <returns>音频更新结果</returns>
         [HttpPost]
         [Route("update/audio")]
         public async Task<Result> UpdateAudio(IFormFile audioFormFile, int musicId, string password)
@@ -827,7 +827,7 @@ namespace CustomFumenProviderWebServer.Controllers
         /// <param name="xmlFormFile">Music.xml文件</param>
         /// <param name="musicId">谱面公开musicId, 比如22857</param>
         /// <param name="password">谱面上传时用的密码</param>
-        /// <returns></returns>
+        /// <returns>Music.xml 更新结果</returns>
         [HttpPost]
         [Route("update/xml")]
         public async Task<Result> UpdateMusicXml(IFormFile xmlFormFile, int musicId, string password)
@@ -856,7 +856,7 @@ namespace CustomFumenProviderWebServer.Controllers
         /// <param name="diffIdx">谱面难度, 0绿谱/1黄谱/2红谱/3紫谱/4白谱</param>
         /// <param name="musicId">谱面公开musicId, 比如22857</param>
         /// <param name="password">谱面上传时用的密码</param>
-        /// <returns></returns>
+        /// <returns>谱面文件更新结果</returns>
         [HttpPost]
         [Route("update/ogkr")]
         public async Task<Result> UpdateOgkrFumen(IFormFile ogkrFormFile, int diffIdx, int musicId, string password)
@@ -883,7 +883,7 @@ namespace CustomFumenProviderWebServer.Controllers
         /// </summary>
         /// <param name="musicId">谱面公开musicId, 比如22857</param>
         /// <param name="password">谱面上传时用的密码</param>
-        /// <returns></returns>
+        /// <returns>info.json 更新结果</returns>
         [HttpPost]
         [Route("update/info")]
         public async Task<Result> UpdateSetInfo(int musicId, string password)
