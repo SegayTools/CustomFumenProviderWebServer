@@ -107,16 +107,24 @@ namespace CustomFumenProviderWebServer.Controllers
         /// </summary>
         /// <param name="pageIdx"></param>
         /// <param name="countPerPage"></param>
+        /// <param name="contract">上传者联系方式，null/空字符串表示不过滤</param>
         /// <returns></returns>
         [Route("listPending")]
         [HttpGet]
-        public async Task<FumenQueryResponse> ListPending(int pageIdx, int countPerPage)
+        public async Task<FumenQueryResponse> ListPending(int pageIdx, int countPerPage, string contract = null)
         {
             var offset = pageIdx * countPerPage;
 
             using var db = await fumenDataDBFactory.CreateDbContextAsync();
 
-            var fumenSets = await db.FumenSets.Where(x => x.PublishState == PublishState.Pending).Include(x => x.FumenDifficults).ToListAsync();
+            IQueryable<FumenSet> query = db.FumenSets.Where(x => x.PublishState == PublishState.Pending);
+
+            if (!string.IsNullOrWhiteSpace(contract))
+            {
+                query = query.Where(x => x.Owner.Contact == contract);
+            }
+
+            var fumenSets = await query.Include(x => x.FumenDifficults).ToListAsync();
 
             var response = new FumenQueryResponse();
 
