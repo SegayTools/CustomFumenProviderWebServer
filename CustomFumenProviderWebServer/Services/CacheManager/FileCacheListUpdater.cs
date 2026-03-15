@@ -88,17 +88,20 @@ namespace CustomFumenProviderWebServer.Services.FileCacheList
         private List<CacheFileInfo> Build(string optFolder, string relativeFolder)
         {
             var list = new List<CacheFileInfo>();
-            foreach (var file in Directory.GetFiles(optFolder, "*.*", SearchOption.AllDirectories))
+            if (Directory.Exists(optFolder))
             {
-                var relativePath = Path.GetRelativePath(relativeFolder, file);
-                var time = File.GetLastWriteTimeUtc(file);
-
-                var info = new CacheFileInfo()
+                foreach (var file in Directory.GetFiles(optFolder, "*.*", SearchOption.AllDirectories))
                 {
-                    RelativeFilePath = relativePath,
-                    LastWriteTime = time
-                };
-                list.Add(info);
+                    var relativePath = Path.GetRelativePath(relativeFolder, file);
+                    var time = File.GetLastWriteTimeUtc(file);
+
+                    var info = new CacheFileInfo()
+                    {
+                        RelativeFilePath = relativePath,
+                        LastWriteTime = time
+                    };
+                    list.Add(info);
+                }
             }
             return list;
         }
