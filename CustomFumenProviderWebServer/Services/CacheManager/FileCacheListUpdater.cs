@@ -59,7 +59,7 @@ namespace CustomFumenProviderWebServer.Services.FileCacheList
         private async Task Initalize()
         {
             using var db = await fumenDataDBFactory.CreateDbContextAsync();
-            var fumenSets = await db.FumenSets.Where(x => x.PublishState == PublishState.Published).ToArrayAsync();
+            var fumenSets = await db.FumenSets/*.Where(x => x.PublishState == PublishState.Published)*/.ToArrayAsync();
 
             cacheListService.CacheFumenMap.Clear();
 
@@ -109,7 +109,7 @@ namespace CustomFumenProviderWebServer.Services.FileCacheList
         private async Task OnUpdateInternal(CancellationToken token)
         {
             using var db = await fumenDataDBFactory.CreateDbContextAsync();
-            var fumenSets = await db.FumenSets.Where(x => x.PublishState == PublishState.Published).ToArrayAsync();
+            var fumenSets = await db.FumenSets/*.Where(x => x.PublishState == PublishState.Published)*/.ToArrayAsync();
 
             foreach (var set in fumenSets)
             {

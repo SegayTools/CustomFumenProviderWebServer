@@ -117,7 +117,7 @@ namespace CustomFumenProviderWebServer.Controllers
 
             using var db = await fumenDataDBFactory.CreateDbContextAsync();
 
-            IQueryable<FumenSet> query = db.FumenSets.Where(x => x.PublishState == PublishState.Pending);
+            IQueryable<FumenSet> query = db.FumenSets.Where(x => x.PublishState != PublishState.Published);
 
             if (!string.IsNullOrWhiteSpace(contract))
             {
@@ -381,7 +381,7 @@ namespace CustomFumenProviderWebServer.Controllers
             }
 
             //step9: register in database
-            set.PublishState = PublishState.Pending;
+            set.PublishState = PublishState.NotReadyForPending;
             set.UpdateTime = DateTime.Now;
             set.Owner = new FumenOwner()
             {
@@ -489,7 +489,7 @@ namespace CustomFumenProviderWebServer.Controllers
                     return new(false, result.Message);
                 var set = result.Data;
 
-                var publicState = PublishState.Pending;
+                var publicState = PublishState.NotReadyForPending;
                 if ((await db.FumenSets.FindAsync(musicId)) is FumenSet cSet)
                 {
                     publicState = cSet.PublishState;
@@ -899,6 +899,37 @@ namespace CustomFumenProviderWebServer.Controllers
             var result = await UpdateSetInfo(musicId);
 
             return result;
+        }
+
+        /// <summary>
+        /// 将谱面状态设置为待审核
+        /// 仅当当前状态不为 Published 时允许
+        /// </summary>
+        /// <param name="musicId">谱面公开musicId, 比如22857</param>
+        /// <param name="password">谱面上传时用的密码</param>
+        /// <returns>状态更新结果</returns>
+        [HttpPost]
+        [Route("readyForPending")]
+        public async Task<Result> ReadyForPending(int musicId, string password)
+        {
+            if (!await VerifyPermission(password, musicId))
+            {
+                HttpContext.Response.StatusCode = 403;
+                return new(false, "no permission");
+            }
+
+            using var db = await fumenDataDBFactory.CreateDbContextAsync();
+            if ((await db.FumenSets.FindAsync(musicId)) is not FumenSet set)
+                return new(false, "FumenSet not found");
+
+            if (set.PublishState == PublishState.Published)
+                return new(false, "publishState is Published, cannot set to Pending");
+
+            set.PublishState = PublishState.Pending;
+            set.UpdateTime = DateTime.Now;
+            await db.SaveChangesAsync();
+
+            return new(true);
         }
 
         private void MakeSureOptFolderExist(int musicId)
