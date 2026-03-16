@@ -52,11 +52,11 @@ namespace CustomFumenProviderWebServer.Controllers
         }
 
         [Route("forceUpdate")]
-        [HttpGet]
-        [ResponseCache(Duration = 0, Location = ResponseCacheLocation.Any, NoStore = true)]
+        [HttpPost]
         public async Task<Result> ForceUpdate(bool onlyPublish = true)
         {
-            fileCacheListService.ForceRebuildAll();
+            await fileCacheListService.ForceRebuildAll();
+            return new Result(true);
         }
     }
 }
