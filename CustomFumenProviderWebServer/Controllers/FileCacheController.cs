@@ -1,4 +1,5 @@
 ﻿using CustomFumenProviderWebServer.Databases;
+using CustomFumenProviderWebServer.Models;
 using CustomFumenProviderWebServer.Models.Responses;
 using CustomFumenProviderWebServer.Models.Tables;
 using CustomFumenProviderWebServer.Services.CacheManager;
@@ -48,6 +49,14 @@ namespace CustomFumenProviderWebServer.Controllers
             {
                 CacheFumenInfos = cacheFumenInfoList.ToArray(),
             };
+        }
+
+        [Route("forceUpdate")]
+        [HttpGet]
+        [ResponseCache(Duration = 0, Location = ResponseCacheLocation.Any, NoStore = true)]
+        public async Task<Result> ForceUpdate(bool onlyPublish = true)
+        {
+            fileCacheListService.ForceRebuildAll();
         }
     }
 }

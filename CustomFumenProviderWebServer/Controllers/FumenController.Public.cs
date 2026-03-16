@@ -608,6 +608,9 @@ namespace CustomFumenProviderWebServer.Controllers
                     return new(false, "Generate jacket small failed:" + result.Message);
 
                 pngFile = Path.Combine(storagePath, "jacket.png");
+
+                await CompressJacketPng(inputFile, pngFile);
+
                 System.IO.File.Copy(inputFile, pngFile, true);
 
                 return new(true);
@@ -620,6 +623,11 @@ namespace CustomFumenProviderWebServer.Controllers
             {
                 Directory.Delete(tempFolder, true);
             }
+        }
+
+        private async Task CompressJacketPng(string inputPngFile, string outputPngFile)
+        {
+
         }
 
         private async ValueTask<Result> UpdateInfoJsonUpdateTimeAndPublishState(int musicId, PublishState? changeState = default)

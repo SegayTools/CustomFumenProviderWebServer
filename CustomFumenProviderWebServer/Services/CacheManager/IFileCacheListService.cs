@@ -5,5 +5,8 @@ namespace CustomFumenProviderWebServer.Services.CacheManager
     public interface IFileCacheListService
     {
         ConcurrentDictionary<int, CacheFumenInfo> CacheFumenMap { get; }
+
+        Task ForceRebuildAll();
+        Task ScanChanges(CancellationToken token);
     }
 }
