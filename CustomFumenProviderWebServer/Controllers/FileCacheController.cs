@@ -53,7 +53,7 @@ namespace CustomFumenProviderWebServer.Controllers
 
         [Route("forceUpdate")]
         [HttpPost]
-        public async Task<Result> ForceUpdate(bool onlyPublish = true)
+        public async Task<Result> ForceUpdate()
         {
             await fileCacheListService.ForceRebuildAll();
             return new Result(true);
