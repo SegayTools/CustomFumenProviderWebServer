@@ -187,7 +187,8 @@ namespace CustomFumenProviderWebServer.Services
                 }
             }
 
-            GetNode(musicXml, "IsLunatic").Value = set.FumenDifficults.Any(x => x.DifficultIndex == 4).ToString().ToLower();
+            var isLunatic = set.FumenDifficults.Any(x => x.DifficultIndex == 4);
+            GetNode(musicXml, "IsLunatic").Value = isLunatic.ToString().ToLower();
 
             GetNode(musicXml, "WaveAttribute", "AttributeType").Value = set.WaveAttribute.ToString();
             GetNode(musicXml, "BossLevel").Value = set.BossLevel.ToString();
@@ -195,6 +196,14 @@ namespace CustomFumenProviderWebServer.Services
             GetNode(musicXml, "NameForSort").Value = set.Title.ToUpper();
             GetNode(musicXml, "BossLockHpCoef").Value = set.BossLockHpCoef.ToString();
             GetNode(musicXml, "BossVoiceNo").Value = set.BossVoiceNo.ToString();
+
+            if (!isLunatic)
+            {
+                //强制检查非Lunatic难度下，其他谱面难度是否齐全
+                for (int i = 0; i < 4; i++)
+                    if (set.FumenDifficults.FirstOrDefault(x => x.DifficultIndex == i) is null)
+                        return new Result(false, "非Lunatic谱面的曲子，必须提供Bas/Adv/Exp/Mas四个难度的谱面");
+            }
 
             using var fs = File.OpenWrite(outputFilePath);
             await musicXml.SaveAsync(fs, SaveOptions.None, default);

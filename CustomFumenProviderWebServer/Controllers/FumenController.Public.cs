@@ -622,7 +622,7 @@ namespace CustomFumenProviderWebServer.Controllers
             }
         }
 
-        private async ValueTask<Result> UpdateInfoJsonUpdateTime(int musicId)
+        private async ValueTask<Result> UpdateInfoJsonUpdateTimeAndPublishState(int musicId, PublishState? changeState = default)
         {
             var musicIdStr = musicId.ToString().PadLeft(4, '0');
             var storagePath = Path.Combine(fumenFolderPath, $"fumen{musicIdStr}");
@@ -635,6 +635,9 @@ namespace CustomFumenProviderWebServer.Controllers
                 if ((await db.FumenSets.FindAsync(musicId)) is FumenSet set)
                 {
                     set.UpdateTime = DateTime.Now;
+                    if (changeState is { } state)
+                        set.PublishState = state;
+
                     await db.SaveChangesAsync();
 
                     var jsonFile = Path.Combine(storagePath, $"info.json");
@@ -783,7 +786,8 @@ namespace CustomFumenProviderWebServer.Controllers
             result = await UpdateZipFile(musicId);
             if (!result.IsSuccess)
                 return result;
-            return await UpdateInfoJsonUpdateTime(musicId);
+
+            return await UpdateInfoJsonUpdateTimeAndPublishState(musicId, PublishState.NotReadyForPending);
         }
 
         /// <summary>
@@ -818,7 +822,7 @@ namespace CustomFumenProviderWebServer.Controllers
             if (!result.IsSuccess)
                 return result;
 
-            return await UpdateInfoJsonUpdateTime(musicId);
+            return await UpdateInfoJsonUpdateTimeAndPublishState(musicId, PublishState.NotReadyForPending);
         }
 
 
@@ -836,7 +840,7 @@ namespace CustomFumenProviderWebServer.Controllers
             if (!result.IsSuccess)
                 return result;
 
-            return await UpdateInfoJsonUpdateTime(musicId);
+            return await UpdateInfoJsonUpdateTimeAndPublishState(musicId);
         }
 
         /// <summary>
@@ -864,7 +868,10 @@ namespace CustomFumenProviderWebServer.Controllers
                 return result;
 
             result = await UpdateZipFile(musicId);
-            return result;
+            if (!result.IsSuccess)
+                return result;
+
+            return await UpdateInfoJsonUpdateTimeAndPublishState(musicId, PublishState.NotReadyForPending);
         }
 
         /// <summary>
@@ -893,7 +900,10 @@ namespace CustomFumenProviderWebServer.Controllers
                 return result;
 
             result = await UpdateZipFile(musicId);
-            return result;
+            if (!result.IsSuccess)
+                return result;
+
+            return await UpdateInfoJsonUpdateTimeAndPublishState(musicId, PublishState.NotReadyForPending);
         }
 
         /// <summary>
