@@ -24,7 +24,7 @@ namespace CustomFumenProviderWebServer.Services.CacheManager
         public async Task ForceRebuildAll()
         {
             using var db = await fumenDataDBFactory.CreateDbContextAsync();
-            var fumenSets = await db.FumenSets.Include(x => x.FumenDifficults).ToArrayAsync();
+            var fumenSets = await db.FumenSets.Include(x => x.FumenDifficults).Where(x => x.PublishState != Models.PublishState.NotReadyForPending).ToArrayAsync();
 
             CacheFumenMap.Clear();
 
@@ -82,7 +82,7 @@ namespace CustomFumenProviderWebServer.Services.CacheManager
         public async Task ScanChanges(CancellationToken token)
         {
             using var db = await fumenDataDBFactory.CreateDbContextAsync();
-            var fumenSets = await db.FumenSets.Include(x => x.FumenDifficults).ToArrayAsync();
+            var fumenSets = await db.FumenSets.Include(x => x.FumenDifficults).Where(x => x.PublishState != Models.PublishState.NotReadyForPending).ToArrayAsync();
 
             foreach (var set in fumenSets)
             {
