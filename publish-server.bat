@@ -1,1 +1,0 @@
-docker push mikirasora/fumen_server:latest
