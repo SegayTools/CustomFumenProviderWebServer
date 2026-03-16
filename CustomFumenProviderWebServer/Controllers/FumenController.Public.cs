@@ -821,6 +821,24 @@ namespace CustomFumenProviderWebServer.Controllers
             return await UpdateInfoJsonUpdateTime(musicId);
         }
 
+
+        [HttpPost]
+        [Route("update/repackZip")]
+        public async Task<Result> ForceRepackZipFile(int musicId, string password)
+        {
+            if (!await VerifyPermission(password, musicId))
+            {
+                HttpContext.Response.StatusCode = 403;
+                return new(false, "no permission");
+            }
+
+            var result = await UpdateZipFile(musicId);
+            if (!result.IsSuccess)
+                return result;
+
+            return await UpdateInfoJsonUpdateTime(musicId);
+        }
+
         /// <summary>
         /// 更新谱面的Music.xml
         /// </summary>
