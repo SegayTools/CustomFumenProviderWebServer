@@ -1,4 +1,6 @@
-﻿namespace CustomFumenProviderWebServer.Services.CacheManager
+﻿using CustomFumenProviderWebServer.Models.Tables;
+
+namespace CustomFumenProviderWebServer.Services.CacheManager
 {
     public class CacheFumenInfo
     {
@@ -6,5 +8,6 @@
         public DateTime UpdateTime { get; set; }
 
         public List<CacheFileInfo> CacheFileInfo { get; set; } = new();
+        public FumenSet FumenSet { get; set; }
     }
 }

@@ -44,6 +44,7 @@ namespace CustomFumenProviderWebServer.Services.CacheManager
             var fumenInfo = new CacheFumenInfo()
             {
                 MusicId = set.MusicId,
+                FumenSet = set,
                 UpdateTime = set.UpdateTime,
             };
             var optFolder = Path.Combine(fumenFolderPath, $"fumen{set.MusicId}", "opt");
