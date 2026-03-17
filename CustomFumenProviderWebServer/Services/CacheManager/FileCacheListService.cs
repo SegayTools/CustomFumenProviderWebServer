@@ -18,7 +18,8 @@ namespace CustomFumenProviderWebServer.Services.CacheManager
         {
             this.logger = logger;
             this.fumenDataDBFactory = fumenDataDBFactory;
-            fumenFolderPath = Environment.GetEnvironmentVariable("FumenDirectory");
+            fumenFolderPath = Path.GetFullPath(Environment.GetEnvironmentVariable("FumenDirectory"));
+            logger.LogInformation($"fumenFolderPath full path:{fumenFolderPath}");
         }
 
         public async Task ForceRebuildAll()

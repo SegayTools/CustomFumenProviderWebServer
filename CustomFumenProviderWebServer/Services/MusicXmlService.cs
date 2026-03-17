@@ -211,7 +211,7 @@ namespace CustomFumenProviderWebServer.Services
             return new Result(true);
         }
 
-        private async Task<Result> ParseFumenFileInfo(FumenDifficult diff, string fumenFilePath)
+        public async Task<Result> ParseFumenFileInfo(FumenDifficult diff, string fumenFilePath)
         {
             try
             {

@@ -464,7 +464,7 @@ namespace CustomFumenProviderWebServer.Controllers
             }
         }
 
-        async ValueTask<Result> UpdateSetInfo(int musicId)
+        async ValueTask<Result> UpdateSetInfo(int musicId, Func<FumenSet, Task<bool>> additionalUpdateFunc = default)
         {
             var musicIdStr = musicId.ToString().PadLeft(4, '0');
             var tempFolder = TempPathUtils.GetNewTempFolder();
@@ -501,6 +501,8 @@ namespace CustomFumenProviderWebServer.Controllers
                 set.PublishState = publicState;
                 set.UpdateTime = DateTime.Now;
 
+                var needUpdateMusicXml = additionalUpdateFunc != null && (await additionalUpdateFunc.Invoke(set));
+
                 db.Add(set);
                 await db.SaveChangesAsync();
 
@@ -512,6 +514,15 @@ namespace CustomFumenProviderWebServer.Controllers
                 }
 
                 System.IO.File.Move(tempJsonFile, jsonFile, true);
+
+                //update music.xml if need
+                if (needUpdateMusicXml)
+                {
+                    logger.LogInformation($"fumen set had been changed,now re-generate {xmlFile}");
+                    var tempXmlFilePath = Path.Combine(tempFolder, "Music.xml");
+                    await musicXmlService.GenerateMusicXml(set, tempXmlFilePath);
+                    System.IO.File.Copy(tempXmlFilePath, xmlFile, true);
+                }
 
                 await trans.CommitAsync();
                 return new(true);
@@ -664,17 +675,38 @@ namespace CustomFumenProviderWebServer.Controllers
             }
         }
 
-        async ValueTask<Result> ProcessFumenToFile(string ogkrFile, int musicId, int diffIdx)
+        async ValueTask<Result> ProcessFumenToFile(string ogkrFile, int musicId, int diffIdx, float? changeDiff)
         {
             var musicIdStr = musicId.ToString().PadLeft(4, '0');
             var diffIdxStr = diffIdx.ToString().PadLeft(2, '0');
 
             var fumenFile = Path.Combine(fumenFolderPath, $"fumen{musicIdStr}", "opt", "music", $"music{musicIdStr}", $"{musicIdStr}_{diffIdxStr}.ogkr");
 
+            async Task<bool> UpdateDiff(FumenSet set)
+            {
+                var diff = set.FumenDifficults.FirstOrDefault(d => d.DifficultIndex == diffIdx);
+                if (diff is null)
+                {
+                    diff = new FumenDifficult();
+                    diff.MusicId = musicId;
+                    set.FumenDifficults.Add(diff);
+                }
+
+                if (changeDiff is { } newDiff)
+                    diff.Level = newDiff;
+                /*
+                var result = await musicXmlService.ParseFumenFileInfo(diff, ogkrFile);
+                if (!result.IsSuccess)
+                    return false;
+
+                */
+                return true;
+            }
+
             try
             {
                 System.IO.File.Copy(ogkrFile, fumenFile, true);
-                return await UpdateSetInfo(musicId);
+                return await UpdateSetInfo(musicId, UpdateDiff);
             }
             catch (Exception e)
             {
@@ -887,12 +919,13 @@ namespace CustomFumenProviderWebServer.Controllers
         /// </summary>
         /// <param name="ogkrFormFile">.ogkr谱面文件</param>
         /// <param name="diffIdx">谱面难度, 0绿谱/1黄谱/2红谱/3紫谱/4白谱</param>
+        /// <param name="changeDiff">需要变动难度定数，比如更改到14.70, 不填则不改动</param>
         /// <param name="musicId">谱面公开musicId, 比如22857</param>
         /// <param name="password">谱面上传时用的密码</param>
         /// <returns>谱面文件更新结果</returns>
         [HttpPost]
         [Route("update/ogkr")]
-        public async Task<Result> UpdateOgkrFumen(IFormFile ogkrFormFile, int diffIdx, int musicId, string password)
+        public async Task<Result> UpdateOgkrFumen(IFormFile ogkrFormFile, float? changeDiff, int diffIdx, int musicId, string password)
         {
             if (!await VerifyPermission(password, musicId))
             {
@@ -903,7 +936,7 @@ namespace CustomFumenProviderWebServer.Controllers
             var tmpFile = Path.GetTempFileName();
             await DownloadFormFile(tmpFile, ogkrFormFile);
 
-            var result = await ProcessFumenToFile(tmpFile, musicId, diffIdx);
+            var result = await ProcessFumenToFile(tmpFile, musicId, diffIdx, changeDiff);
             if (!result.IsSuccess)
                 return result;
 
