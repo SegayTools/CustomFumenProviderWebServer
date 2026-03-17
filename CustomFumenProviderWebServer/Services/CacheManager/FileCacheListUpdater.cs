@@ -14,11 +14,13 @@ namespace CustomFumenProviderWebServer.Services.FileCacheList
         private CancellationTokenSource cancelTokenSource;
         private readonly ILogger<FileCacheListUpdater> logger;
         private readonly IFileCacheListService cacheListService;
+        private readonly string fumenFolderPath;
 
         public FileCacheListUpdater(ILogger<FileCacheListUpdater> logger, IFileCacheListService cacheListService)
         {
             this.logger = logger;
             this.cacheListService = cacheListService;
+            this.fumenFolderPath = cacheListService.GetFumenFolderPath();
         }
 
         public Task StartAsync(CancellationToken cancellationToken)
@@ -51,5 +53,7 @@ namespace CustomFumenProviderWebServer.Services.FileCacheList
                 }
             }
         }
+
+
     }
 }

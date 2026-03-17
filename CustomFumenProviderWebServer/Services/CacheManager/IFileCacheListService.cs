@@ -7,6 +7,7 @@ namespace CustomFumenProviderWebServer.Services.CacheManager
         ConcurrentDictionary<int, CacheFumenInfo> CacheFumenMap { get; }
 
         Task ForceRebuildAll();
+        string GetFumenFolderPath();
         Task ScanChanges(CancellationToken token);
     }
 }

@@ -117,5 +117,10 @@ namespace CustomFumenProviderWebServer.Services.CacheManager
 
             logger.LogInformation($"OnUpdateInternal() done");
         }
+
+        public string GetFumenFolderPath()
+        {
+            return fumenFolderPath;
+        }
     }
 }
