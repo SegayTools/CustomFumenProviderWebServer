@@ -3,8 +3,10 @@ using CustomFumenProviderWebServer.Models;
 using CustomFumenProviderWebServer.Models.Responses;
 using CustomFumenProviderWebServer.Models.Tables;
 using CustomFumenProviderWebServer.Services;
+using CustomFumenProviderWebServer.Services.CacheManager;
 using CustomFumenProviderWebServer.Utils;
 using Microsoft.AspNetCore.Components.Forms;
+using Microsoft.AspNetCore.Http.HttpResults;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using System;
@@ -952,10 +954,11 @@ namespace CustomFumenProviderWebServer.Controllers
         /// </summary>
         /// <param name="musicId">谱面公开musicId, 比如22857</param>
         /// <param name="password">谱面上传时用的密码</param>
+        /// <param name="reGenerateMusicXml">是否重新生成Music.xml</param>
         /// <returns>info.json 更新结果</returns>
         [HttpPost]
         [Route("update/info")]
-        public async Task<Result> UpdateSetInfo(int musicId, string password)
+        public async Task<Result> UpdateSetInfo(int musicId, string password, bool reGenerateMusicXml = false)
         {
             if (!await VerifyPermission(password, musicId))
             {
@@ -965,7 +968,7 @@ namespace CustomFumenProviderWebServer.Controllers
 
             MakeSureOptFolderExist(musicId);
 
-            var result = await UpdateSetInfo(musicId);
+            var result = await UpdateSetInfo(musicId, _ => Task.FromResult(reGenerateMusicXml));
 
             return result;
         }
