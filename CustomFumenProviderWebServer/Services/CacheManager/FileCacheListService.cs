@@ -39,6 +39,19 @@ namespace CustomFumenProviderWebServer.Services.CacheManager
             }
         }
 
+        public async Task UpdateCacheFumenInfo(int musicId)
+        {
+            using var db = await fumenDataDBFactory.CreateDbContextAsync();
+            var fumenSet = await db.FumenSets.Include(x => x.FumenDifficults).FirstOrDefaultAsync(x => x.MusicId == musicId);
+
+            if (fumenSet == null)
+                return;
+
+            var fumenInfo = BuildCacheFumenInfo(fumenSet);
+            CacheFumenMap[fumenInfo.MusicId] = fumenInfo;
+
+            logger.LogInformation($"update CacheFumenInfo: {fumenInfo.MusicId}");
+        }
 
         private CacheFumenInfo BuildCacheFumenInfo(FumenSet set)
         {
