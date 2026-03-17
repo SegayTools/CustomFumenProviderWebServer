@@ -38,6 +38,7 @@ namespace CustomFumenProviderWebServer.Controllers
                 if ((await db.FumenSets.FindAsync(musicId)) is FumenSet cSet)
                 {
                     cSet.PublishState = Models.PublishState.Published;
+                    cSet.UpdateTime = DateTime.Now;
 
                     await db.SaveChangesAsync();
                     await trans.CommitAsync();
