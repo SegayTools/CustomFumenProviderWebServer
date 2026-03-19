@@ -75,15 +75,22 @@ namespace CustomFumenProviderWebServer.Controllers
 
             try
             {
-                if ((await db.FumenSets.FindAsync(musicId)) is FumenSet cSet)
+                var any = false;
+                void delete<T>(List<T> removes)
                 {
-                    db.Remove(cSet);
-                    await db.SaveChangesAsync();
-                    await trans.CommitAsync();
-                    return new(true);
+                    any = any || removes.Count > 0;
+                    foreach (var cFumen in removes)
+                        db.Remove(cFumen);
                 }
 
-                return new(false, "fumen not found");
+                delete(await db.FumenSets.Where(x => x.MusicId == musicId).ToListAsync());
+                delete(await db.FumenDifficults.Where(x => x.MusicId == musicId).ToListAsync());
+                delete(await db.FumenOwners.Where(x => x.MusicId == musicId).ToListAsync());
+
+                await db.SaveChangesAsync();
+                await trans.CommitAsync();
+
+                return new(any);
             }
             catch (Exception e)
             {

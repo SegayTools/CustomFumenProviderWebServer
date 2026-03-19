@@ -31,7 +31,7 @@ namespace CustomFumenProviderWebServer.Services.Editor
         {
             try
             {
-                logger.LogInformation($"start fetch editor resource");
+                //logger.LogInformation($"start fetch editor resource");
                 await Task.WhenAll([
                     UpdateEditorResource(editorService.GetEditorResource(false), false),
                     UpdateEditorResource(editorService.GetEditorResource(true), true)
