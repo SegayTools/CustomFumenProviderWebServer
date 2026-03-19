@@ -39,6 +39,15 @@ namespace CustomFumenProviderWebServer.Controllers
             Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping,
         };
 
+        Result HttpStatus(Result result)
+        {
+            if (result.IsSuccess)
+                HttpContext.Response.StatusCode = 200;
+            else
+                HttpContext.Response.StatusCode = 400;
+            return result;
+        }
+
         public FumenController(ILogger<FumenController> logger, IDbContextFactory<FumenDataDB> fumenDataDBFactory, AudioService audioService, JacketService jacketService, MusicXmlService musicXmlService)
         {
             this.logger = logger;
@@ -167,18 +176,32 @@ namespace CustomFumenProviderWebServer.Controllers
             IFormFile lucOgkrFormFile
             )
         {
+            var traceId = Guid.NewGuid().ToString().Replace("-", string.Empty).Replace("[", string.Empty).Replace("]", string.Empty);
+            void traceLog(string msg, LogLevel level = LogLevel.Information) => logger.Log(level, $"[{traceId}]msg");
+            DeliverResultResponse check(DeliverResultResponse result)
+            {
+                traceLog(result.Message, LogLevel.Error);
+                if (result.IsSuccess)
+                    HttpContext.Response.StatusCode = 200;
+                else
+                    HttpContext.Response.StatusCode = 400;
+                return result;
+            }
+
             using var db = await fumenDataDBFactory.CreateDbContextAsync();
 
+            traceLog("begin deliver fumen");
+
             if (jacketFormFile is null)
-                return new(false, "jacket file is not upload.");
+                return check(new(false, "jacket file is not upload."));
             if (audioFormFile is null)
-                return new(false, "audio file is not upload.");
+                return check(new(false, "audio file is not upload."));
             if (musicXmlFormFile is null)
-                return new(false, "Music.xml file is not upload.");
+                return check(new(false, "Music.xml file is not upload."));
             if (string.IsNullOrWhiteSpace(password))
-                return new(false, "password is empty");
+                return check(new(false, "password is empty"));
             if (string.IsNullOrWhiteSpace(contract))
-                return new(false, "contract is empty");
+                return check(new(false, "contract is empty"));
 
             var tempFolder = TempPathUtils.GetNewTempFolder();
             var jacketFilePath = Path.Combine(tempFolder, $"jacket" + Path.GetExtension(jacketFormFile.FileName));
@@ -196,6 +219,7 @@ namespace CustomFumenProviderWebServer.Controllers
             var optTempFolder = Path.Combine(generatedTempFolder, "opt");
             Directory.CreateDirectory(optTempFolder);
 
+            traceLog("download files begin.");
             //download others
             await Task.WhenAll([
                 DownloadFormFile(jacketFilePath,jacketFormFile),
@@ -207,6 +231,7 @@ namespace CustomFumenProviderWebServer.Controllers
                 DownloadFormFile(lucOgkrFilePath,lucOgkrFormFile),
                 DownloadFormFile(xmlFilePath, musicXmlFormFile)
                 ]);
+            traceLog("download files done.");
 
             //step1: generate FumenSet
             FumenSet set;
@@ -214,25 +239,27 @@ namespace CustomFumenProviderWebServer.Controllers
             {
                 var result = await musicXmlService.GenerateFumenSet(xmlFilePath, bscOgkrFilePath, advOgkrFilePath, expOgkrFilePath, mstOgkrFilePath, lucOgkrFilePath);
                 if (!result.IsSuccess)
-                    return new(false, result.Message);
+                    return check(new(false, result.Message));
                 set = result.Data;
             }
             catch (Exception e)
             {
-                return new DeliverResultResponse(false, $"Generate FumenSet throw exception:{e.Message}");
+                return check(new(false, $"Generate FumenSet throw exception:{e.Message}"));
             }
+            traceLog($"generate fumenSet done, musicId:{set.MusicId}, title:{set.Title}, artist:{set.Artist}");
 
             if (set.MusicId > 9999 || set.MusicId <= 0)
-                return new DeliverResultResponse(false, $"Music.xml provide musicId > 9999");
+                return check(new DeliverResultResponse(false, $"Music.xml provide musicId > 9999"));
 
             //step1.5: re-alloc new musicId
             var newMusicId = set.MusicId + 20000;
             set.MusicId = newMusicId;
 
             if ((await db.FumenSets.FindAsync(newMusicId)) is not null)
-                return new(false, "musicId is conflict.");
+                return check(new(false, "musicId is conflict."));
 
             var musicIdStr = set.MusicId.ToString().PadLeft(4, '0');
+            traceLog($"realloc musicId done, new musicId:{set.MusicId}");
 
             //step2: generate Jacket
             try
@@ -251,7 +278,7 @@ namespace CustomFumenProviderWebServer.Controllers
                     var outputPngFile = Path.Combine(Path.GetDirectoryName(jacketFilePath), "output.png");
                     var dumpResult = await jacketService.DumpPngFromAssetbundle(jacketFilePath, outputPngFile);
                     if (!dumpResult.IsSuccess)
-                        return new(false, $"convert .ab to .png failed: {dumpResult.Message}");
+                        return check(new(false, $"convert .ab to .png failed: {dumpResult.Message}"));
                     jacketFilePath = outputPngFile;
                 }
 
@@ -261,17 +288,18 @@ namespace CustomFumenProviderWebServer.Controllers
                 rename(ref jacketFilePath, $"{musicIdStr}.png");
                 var result = await jacketService.GenerateAssetbundleJacket(jacketFilePath, 520, 520, assetsFolder);
                 if (!result.IsSuccess)
-                    return new(false, "Generate jacket failed:" + result.Message);
+                    return check(new(false, "Generate jacket failed:" + result.Message));
 
                 rename(ref jacketFilePath, $"{musicIdStr}_s.png");
                 result = await jacketService.GenerateAssetbundleJacket(jacketFilePath, 220, 220, assetsFolder);
                 if (!result.IsSuccess)
-                    return new(false, "Generate jacket failed:" + result.Message);
+                    return check(new(false, "Generate jacket failed:" + result.Message));
             }
             catch (Exception e)
             {
-                return new DeliverResultResponse(false, $"Generate jacket throw exception:{e.Message}");
+                return check(new DeliverResultResponse(false, $"Generate jacket throw exception:{e.Message}"));
             }
+            traceLog($"generate jacket done");
 
             //step3: generate Audio
             try
@@ -290,7 +318,7 @@ namespace CustomFumenProviderWebServer.Controllers
                     var zipFiles = Directory.GetFiles(unpackFolder);
 
                     if (zipFiles.Length == 0)
-                        return new(false, "audio.zip not contains audio file."); //fuck
+                        return check(new(false, "audio.zip not contains audio file.")); //fuck
 
                     //if audio.zip contains .acb(and .awb), copy them to opt/musicsource folder directly.
                     if (zipFiles.FirstOrDefault(x => x.EndsWith(".acb")) is string acbFile)
@@ -313,15 +341,16 @@ namespace CustomFumenProviderWebServer.Controllers
 
                 var result = await audioService.GenerateAcbAwbFiles(audioFilePath, set.MusicId, set.Title, audioFolder);
                 if (!result.IsSuccess)
-                    return new(false, "Generate audio failed:" + result.Message);
+                    return check(new(false, "Generate audio failed:" + result.Message));
             }
             catch (Exception e)
             {
-                return new DeliverResultResponse(false, $"Generate audio throw exception:{e.Message}");
+                return check(new DeliverResultResponse(false, $"Generate audio throw exception:{e.Message}"));
             }
+            traceLog($"generate audio done");
         AUDIO_GENERATOR_SKIP:
 
-            //step4: copy files.
+            //step4: copy fumen files.
             var fumenFolder = Path.Combine(optTempFolder, "music", $"music{musicIdStr}");
             Directory.CreateDirectory(fumenFolder);
             try
@@ -345,10 +374,12 @@ namespace CustomFumenProviderWebServer.Controllers
             }
             catch (Exception e)
             {
-                return new DeliverResultResponse(false, $"Copy fumen files throw exception:{e.Message}");
+                return check(new DeliverResultResponse(false, $"Copy fumen files throw exception:{e.Message}"));
             }
+            traceLog($"copy fumen files done");
 
             //step5: generate Music.xml
+
             try
             {
                 var outputXmlFilePath = Path.Combine(fumenFolder, "Music.xml");
@@ -356,8 +387,9 @@ namespace CustomFumenProviderWebServer.Controllers
             }
             catch (Exception e)
             {
-                return new DeliverResultResponse(false, $"Copy fumen files throw exception:{e.Message}");
+                return check(new DeliverResultResponse(false, $"Copy fumen files throw exception:{e.Message}"));
             }
+            traceLog($"generate Music.xml done");
 
             //todo step6: add Readme.md and RegisterFumenJackets.exe
 
@@ -368,6 +400,7 @@ namespace CustomFumenProviderWebServer.Controllers
                 using var fs = System.IO.File.OpenWrite(zipFile);
                 ZipFile.CreateFromDirectory(optTempFolder, fs, CompressionLevel.SmallestSize, false);
             });
+            traceLog($"pack zip done");
 
             //step8: generate info.json
             {
@@ -375,12 +408,14 @@ namespace CustomFumenProviderWebServer.Controllers
                 using var fs = System.IO.File.OpenWrite(infoJsonFilePath);
                 await JsonSerializer.SerializeAsync(fs, set, jsonSerializerOptions);
             }
+            traceLog($"generate info.json done");
 
             //step8: move .png file
             {
                 var outputJacketFilePath = Path.Combine(generatedTempFolder, $"jacket.png");
                 System.IO.File.Move(jacketFilePath, outputJacketFilePath, true);
             }
+            traceLog($"generate jacket.png done");
 
             //step9: register in database
             set.PublishState = PublishState.NotReadyForPending;
@@ -393,6 +428,7 @@ namespace CustomFumenProviderWebServer.Controllers
             };
 
             using var trans = await db.Database.BeginTransactionAsync();
+            traceLog($"begin transaction");
 
             try
             {
@@ -400,6 +436,7 @@ namespace CustomFumenProviderWebServer.Controllers
                 var isUpdate = false;
                 if ((await db.FumenSets.FindAsync(set.MusicId)) is FumenSet cSet)
                 {
+                    traceLog($"find old fumenSet, remove");
                     isUpdate = true;
                     db.Remove(cSet);
                     await db.SaveChangesAsync();
@@ -407,6 +444,7 @@ namespace CustomFumenProviderWebServer.Controllers
 
                 db.Add(set);
                 await db.SaveChangesAsync();
+                traceLog($"added new fumenSet");
 
                 //step10: move generated files to storage.
                 var storagePath = Path.Combine(fumenFolderPath, $"fumen{musicIdStr}");
@@ -419,14 +457,15 @@ namespace CustomFumenProviderWebServer.Controllers
                 }
 
                 FileUtils.CopyDirectory(generatedTempFolder, storagePath);
+                traceLog($"fumen folder is copied");
 
                 await trans.CommitAsync();
-                return new(true, "register successfully, waiting for pending", set);
+                return check(new(true, "register successfully, waiting for pending", set));
             }
             catch (Exception e)
             {
                 await trans.RollbackAsync();
-                return new(false, $"Register fumen data throw exception: {e.Message}");
+                return check(new(false, $"Register fumen data throw exception: {e.Message}"));
             }
             finally
             {
