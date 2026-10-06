@@ -95,14 +95,16 @@ namespace CustomFumenProviderWebServer.Services
             musicSourceXml.XPathSelectElement("//dataName").Value = $"musicsource{musicIdStr}";
 
             var output = Path.Combine(outputFolder, "MusicSource.xml");
-            using var fs = File.OpenWrite(output);
-            using var writer = XmlWriter.Create(fs, new XmlWriterSettings()
+            await FileUtils.WriteAtomicAsync(output, async fs =>
             {
-                Async = true,
-                Encoding = Encoding.UTF8,
-                Indent = true
+                using var writer = XmlWriter.Create(fs, new XmlWriterSettings()
+                {
+                    Async = true,
+                    Encoding = Encoding.UTF8,
+                    Indent = true
+                });
+                await musicSourceXml.SaveAsync(writer, default);
             });
-            await musicSourceXml.SaveAsync(writer, default);
         }
 
         /*

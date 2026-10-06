@@ -47,6 +47,7 @@ namespace CustomFumenProviderWebServer
             builder.Services.AddSingleton<JacketService>();
             builder.Services.AddSingleton<MusicXmlService>();
             builder.Services.AddSingleton<AudioService>();
+            builder.Services.AddSingleton<FumenOperationLock>();
 
             builder.Services.AddSingleton<IEditorService, EditorService>();
             builder.Services.AddHostedService<EditorServiceUpdater>();

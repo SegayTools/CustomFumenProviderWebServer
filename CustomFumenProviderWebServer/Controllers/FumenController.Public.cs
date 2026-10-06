@@ -30,6 +30,7 @@ namespace CustomFumenProviderWebServer.Controllers
         private readonly AudioService audioService;
         private readonly JacketService jacketService;
         private readonly MusicXmlService musicXmlService;
+        private readonly FumenOperationLock fumenOperationLock;
         private readonly string fumenFolderPath;
         private readonly SHA256 sha256 = SHA256.Create();
 
@@ -37,6 +38,34 @@ namespace CustomFumenProviderWebServer.Controllers
         {
             WriteIndented = true,
             Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping,
+        };
+
+        /// <summary>
+        /// 允许用于 /api/list?order= 排序的字段白名单(不区分大小写)。
+        /// 以前直接把参数交给 EF.Property,任意字符串会抛异常变成 500。
+        /// </summary>
+        private static readonly Dictionary<string, Expression<Func<FumenSet, object>>> sortableFields = new(StringComparer.OrdinalIgnoreCase)
+        {
+            [nameof(FumenSet.MusicId)] = x => x.MusicId,
+            [nameof(FumenSet.Title)] = x => x.Title,
+            [nameof(FumenSet.Artist)] = x => x.Artist,
+            [nameof(FumenSet.UpdateTime)] = x => x.UpdateTime,
+            [nameof(FumenSet.PublishState)] = x => x.PublishState,
+            [nameof(FumenSet.BossCardId)] = x => x.BossCardId,
+            [nameof(FumenSet.BossCardName)] = x => x.BossCardName,
+            [nameof(FumenSet.BossLevel)] = x => x.BossLevel,
+            [nameof(FumenSet.BossVoiceNo)] = x => x.BossVoiceNo,
+            [nameof(FumenSet.BossLockHpCoef)] = x => x.BossLockHpCoef,
+            [nameof(FumenSet.WaveAttribute)] = x => x.WaveAttribute,
+            [nameof(FumenSet.StageId)] = x => x.StageId,
+            [nameof(FumenSet.StageName)] = x => x.StageName,
+            [nameof(FumenSet.MusicRightsId)] = x => x.MusicRightsId,
+            [nameof(FumenSet.MusicRightsName)] = x => x.MusicRightsName,
+            [nameof(FumenSet.GenreId)] = x => x.GenreId,
+            [nameof(FumenSet.GenreName)] = x => x.GenreName,
+            [nameof(FumenSet.VersionId)] = x => x.VersionId,
+            [nameof(FumenSet.VersionName)] = x => x.VersionName,
+            [nameof(FumenSet.SortOrder)] = x => x.SortOrder,
         };
 
         Result HttpStatus(Result result)
@@ -48,13 +77,14 @@ namespace CustomFumenProviderWebServer.Controllers
             return result;
         }
 
-        public FumenController(ILogger<FumenController> logger, IDbContextFactory<FumenDataDB> fumenDataDBFactory, AudioService audioService, JacketService jacketService, MusicXmlService musicXmlService)
+        public FumenController(ILogger<FumenController> logger, IDbContextFactory<FumenDataDB> fumenDataDBFactory, AudioService audioService, JacketService jacketService, MusicXmlService musicXmlService, FumenOperationLock fumenOperationLock)
         {
             this.logger = logger;
             this.fumenDataDBFactory = fumenDataDBFactory;
             this.audioService = audioService;
             this.jacketService = jacketService;
             this.musicXmlService = musicXmlService;
+            this.fumenOperationLock = fumenOperationLock;
             this.fumenFolderPath = Environment.GetEnvironmentVariable("FumenDirectory");
         }
 
@@ -70,8 +100,13 @@ namespace CustomFumenProviderWebServer.Controllers
         /// <returns>分页后的谱面列表与总数</returns>
         [Route("list")]
         [HttpGet]
-        public async Task<FumenQueryResponse> List(int pageIdx, int countPerPage, string genre = null, string order = null, float? minFilterLevel = null, float? maxFilterLevel = null)
+        public async Task<ActionResult<FumenQueryResponse>> List(int pageIdx, int countPerPage, string genre = null, string order = null, float? minFilterLevel = null, float? maxFilterLevel = null)
         {
+            if (pageIdx < 0 || countPerPage < 0)
+                return BadRequest("pageIdx/countPerPage must not be negative");
+            if ((long)pageIdx * countPerPage > int.MaxValue)
+                return BadRequest("pageIdx * countPerPage is too large");
+
             var offset = pageIdx * countPerPage;
 
             using var db = await fumenDataDBFactory.CreateDbContextAsync();
@@ -85,7 +120,10 @@ namespace CustomFumenProviderWebServer.Controllers
 
             if (!string.IsNullOrWhiteSpace(order))
             {
-                list = list.OrderBy(x => EF.Property<FumenSet>(x, order));
+                if (!sortableFields.TryGetValue(order, out var orderExpression))
+                    return BadRequest($"unsupported order field: {order}");
+
+                list = list.OrderBy(orderExpression);
             }
             else
             {
@@ -103,12 +141,12 @@ namespace CustomFumenProviderWebServer.Controllers
                 list = list.Where(x => x.FumenDifficults.Any(d => d.Level <= maxLevel));
             }
 
-            var fumenSets = await list.Include(x => x.FumenDifficults).ToListAsync();
-
-            var response = new FumenQueryResponse();
-
-            response.FumenSets = fumenSets.Skip(offset).Take(countPerPage).ToList();
-            response.QueryResultTotal = fumenSets.Count;
+            //分页在数据库侧完成,避免把整张表读进内存
+            var response = new FumenQueryResponse()
+            {
+                QueryResultTotal = await list.CountAsync(),
+                FumenSets = await list.Skip(offset).Take(countPerPage).Include(x => x.FumenDifficults).ToListAsync(),
+            };
 
             return response;
         }
@@ -177,7 +215,7 @@ namespace CustomFumenProviderWebServer.Controllers
             )
         {
             var traceId = Guid.NewGuid().ToString().Replace("-", string.Empty).Replace("[", string.Empty).Replace("]", string.Empty);
-            void traceLog(string msg, LogLevel level = LogLevel.Information) => logger.Log(level, $"[{traceId}]msg");
+            void traceLog(string msg, LogLevel level = LogLevel.Information) => logger.Log(level, $"[{traceId}]{msg}");
             DeliverResultResponse check(DeliverResultResponse result)
             {
                 traceLog(result.Message, LogLevel.Error);
@@ -418,6 +456,8 @@ namespace CustomFumenProviderWebServer.Controllers
             traceLog($"generate jacket.png done");
 
             //step9: register in database
+            using var _ = await fumenOperationLock.AcquireAsync(newMusicId);
+
             set.PublishState = PublishState.NotReadyForPending;
             set.UpdateTime = DateTime.Now;
             set.Owner = new FumenOwner()
@@ -531,15 +571,19 @@ namespace CustomFumenProviderWebServer.Controllers
                 var set = result.Data;
 
                 var publicState = PublishState.NotReadyForPending;
+                FumenOwner owner = null;
                 if ((await db.FumenSets.FindAsync(musicId)) is FumenSet cSet)
                 {
                     publicState = cSet.PublishState;
+                    //重建时必须挂回原作者信息,否则 OwnerMusicId 变 NULL,按联系方式筛选待审核列表会失效
+                    owner = cSet.Owner;
                     db.Remove(cSet);
                     await db.SaveChangesAsync();
                 }
 
                 set.MusicId = musicId;
                 set.PublishState = publicState;
+                set.Owner = owner;
                 set.UpdateTime = DateTime.Now;
 
                 var needUpdateMusicXml = additionalUpdateFunc != null && (await additionalUpdateFunc.Invoke(set));
@@ -701,10 +745,8 @@ namespace CustomFumenProviderWebServer.Controllers
                     await db.SaveChangesAsync();
 
                     var jsonFile = Path.Combine(storagePath, $"info.json");
-                    {
-                        using var fs = System.IO.File.OpenWrite(jsonFile);
-                        await JsonSerializer.SerializeAsync(fs, set, jsonSerializerOptions);
-                    }
+                    await FileUtils.WriteAtomicAsync(jsonFile, async fs =>
+                        await JsonSerializer.SerializeAsync(fs, set, jsonSerializerOptions));
                     await trans.CommitAsync();
                 }
                 return new(true);
@@ -730,6 +772,8 @@ namespace CustomFumenProviderWebServer.Controllers
                 {
                     diff = new FumenDifficult();
                     diff.MusicId = musicId;
+                    //必须带上难度下标,否则默认 0 会和 Basic 主键冲突
+                    diff.DifficultIndex = diffIdx;
                     set.FumenDifficults.Add(diff);
                 }
 
@@ -755,7 +799,7 @@ namespace CustomFumenProviderWebServer.Controllers
             }
         }
 
-        async ValueTask<Result> ProcessAudioToFile(string inputFile, int musicId, string title)
+        async ValueTask<Result> ProcessAudioToFile(string inputFile, string originalFileName, int musicId, string title)
         {
             var musicIdStr = musicId.ToString().PadLeft(4, '0');
             var tempFolder = TempPathUtils.GetNewTempFolder();
@@ -766,7 +810,8 @@ namespace CustomFumenProviderWebServer.Controllers
             {
                 Directory.CreateDirectory(audioFolder);
 
-                if (inputFile.EndsWith(".zip"))
+                //传入的是系统临时文件(扩展名是 .tmp),必须用上传时的原始文件名判断是否 zip
+                if (string.Equals(Path.GetExtension(originalFileName ?? string.Empty), ".zip", StringComparison.OrdinalIgnoreCase))
                 {
                     using var fs = System.IO.File.OpenRead(inputFile);
                     using var zip = new ZipArchive(fs, ZipArchiveMode.Read, true);
@@ -823,6 +868,23 @@ namespace CustomFumenProviderWebServer.Controllers
             await formStream.CopyToAsync(fs);
         }
 
+        /// <summary>
+        /// 把上传内容写入系统临时文件 → 交给 action 处理 → 无论成功失败都删除临时文件。
+        /// </summary>
+        async Task<Result> WithDownloadedTempFile(IFormFile formFile, Func<string, ValueTask<Result>> action)
+        {
+            var tmpFile = Path.GetTempFileName();
+            try
+            {
+                await DownloadFormFile(tmpFile, formFile);
+                return await action(tmpFile);
+            }
+            finally
+            {
+                System.IO.File.Delete(tmpFile);
+            }
+        }
+
         async ValueTask<bool> VerifyPermission(string password, int? musicId = null)
         {
             using var db = await fumenDataDBFactory.CreateDbContextAsync();
@@ -857,18 +919,17 @@ namespace CustomFumenProviderWebServer.Controllers
                 return new(false, "no permission");
             }
 
-            var tmpFile = Path.GetTempFileName();
-            await DownloadFormFile(tmpFile, jacketFormFile);
+            using var _ = await fumenOperationLock.AcquireAsync(musicId);
 
-            var result = await ProcessJacketToFile(tmpFile, musicId);
+            var result = await WithDownloadedTempFile(jacketFormFile, file => ProcessJacketToFile(file, musicId));
             if (!result.IsSuccess)
-                return result;
+                return HttpStatus(result);
 
             result = await UpdateZipFile(musicId);
             if (!result.IsSuccess)
-                return result;
+                return HttpStatus(result);
 
-            return await UpdateInfoJsonUpdateTimeAndPublishState(musicId, PublishState.NotReadyForPending);
+            return HttpStatus(await UpdateInfoJsonUpdateTimeAndPublishState(musicId, PublishState.NotReadyForPending));
         }
 
         /// <summary>
@@ -888,22 +949,21 @@ namespace CustomFumenProviderWebServer.Controllers
                 return new(false, "no permission");
             }
 
-            var tmpFile = Path.GetTempFileName();
-            await DownloadFormFile(tmpFile, audioFormFile);
+            using var _ = await fumenOperationLock.AcquireAsync(musicId);
 
             using var db = await fumenDataDBFactory.CreateDbContextAsync();
             if ((await db.FumenSets.FindAsync(musicId)) is not FumenSet set)
-                return new(false, "FumenSet not found");
+                return HttpStatus(new(false, "FumenSet not found"));
 
-            var result = await ProcessAudioToFile(tmpFile, musicId, set.Title);
+            var result = await WithDownloadedTempFile(audioFormFile, file => ProcessAudioToFile(file, audioFormFile?.FileName, musicId, set.Title));
             if (!result.IsSuccess)
-                return result;
+                return HttpStatus(result);
 
             result = await UpdateZipFile(musicId);
             if (!result.IsSuccess)
-                return result;
+                return HttpStatus(result);
 
-            return await UpdateInfoJsonUpdateTimeAndPublishState(musicId, PublishState.NotReadyForPending);
+            return HttpStatus(await UpdateInfoJsonUpdateTimeAndPublishState(musicId, PublishState.NotReadyForPending));
         }
 
 
@@ -917,11 +977,13 @@ namespace CustomFumenProviderWebServer.Controllers
                 return new(false, "no permission");
             }
 
+            using var _ = await fumenOperationLock.AcquireAsync(musicId);
+
             var result = await UpdateZipFile(musicId);
             if (!result.IsSuccess)
-                return result;
+                return HttpStatus(result);
 
-            return await UpdateInfoJsonUpdateTimeAndPublishState(musicId);
+            return HttpStatus(await UpdateInfoJsonUpdateTimeAndPublishState(musicId));
         }
 
         /// <summary>
@@ -941,18 +1003,17 @@ namespace CustomFumenProviderWebServer.Controllers
                 return new(false, "no permission");
             }
 
-            var tmpFile = Path.GetTempFileName();
-            await DownloadFormFile(tmpFile, xmlFormFile);
+            using var _ = await fumenOperationLock.AcquireAsync(musicId);
 
-            var result = await ProcessMusicXmlToFile(tmpFile, musicId);
+            var result = await WithDownloadedTempFile(xmlFormFile, file => ProcessMusicXmlToFile(file, musicId));
             if (!result.IsSuccess)
-                return result;
+                return HttpStatus(result);
 
             result = await UpdateZipFile(musicId);
             if (!result.IsSuccess)
-                return result;
+                return HttpStatus(result);
 
-            return await UpdateInfoJsonUpdateTimeAndPublishState(musicId, PublishState.NotReadyForPending);
+            return HttpStatus(await UpdateInfoJsonUpdateTimeAndPublishState(musicId, PublishState.NotReadyForPending));
         }
 
         /// <summary>
@@ -974,18 +1035,20 @@ namespace CustomFumenProviderWebServer.Controllers
                 return new(false, "no permission");
             }
 
-            var tmpFile = Path.GetTempFileName();
-            await DownloadFormFile(tmpFile, ogkrFormFile);
+            if (diffIdx is < 0 or > 4)
+                return HttpStatus(new(false, $"diffIdx must be between 0 and 4, got {diffIdx}"));
 
-            var result = await ProcessFumenToFile(tmpFile, musicId, diffIdx, changeDiff);
+            using var _ = await fumenOperationLock.AcquireAsync(musicId);
+
+            var result = await WithDownloadedTempFile(ogkrFormFile, file => ProcessFumenToFile(file, musicId, diffIdx, changeDiff));
             if (!result.IsSuccess)
-                return result;
+                return HttpStatus(result);
 
             result = await UpdateZipFile(musicId);
             if (!result.IsSuccess)
-                return result;
+                return HttpStatus(result);
 
-            return await UpdateInfoJsonUpdateTimeAndPublishState(musicId, PublishState.NotReadyForPending);
+            return HttpStatus(await UpdateInfoJsonUpdateTimeAndPublishState(musicId, PublishState.NotReadyForPending));
         }
 
         /// <summary>
@@ -1005,11 +1068,23 @@ namespace CustomFumenProviderWebServer.Controllers
                 return new(false, "no permission");
             }
 
+            using var _ = await fumenOperationLock.AcquireAsync(musicId);
+
             MakeSureOptFolderExist(musicId);
 
-            var result = await UpdateSetInfo(musicId, _ => Task.FromResult(reGenerateMusicXml));
+            var result = await UpdateSetInfo(musicId, existingSet => Task.FromResult(reGenerateMusicXml));
+            if (!result.IsSuccess)
+                return HttpStatus(result);
 
-            return result;
+            //opt 里的内容可能比 zip 新(直接改盘 / 刚重新生成 Music.xml),以前这里不重打包,客户端会拿到过期 zip
+            if (IsZipOutdated(musicId))
+            {
+                result = await UpdateZipFile(musicId);
+                if (!result.IsSuccess)
+                    return HttpStatus(result);
+            }
+
+            return HttpStatus(result);
         }
 
         /// <summary>
@@ -1055,6 +1130,32 @@ namespace CustomFumenProviderWebServer.Controllers
                 return;
             Directory.CreateDirectory(optPath);
             ZipFile.ExtractToDirectory(zipPath, optPath, true);
+        }
+
+        /// <summary>
+        /// opt 目录里存在比 fumen{musicId}.zip 更新的文件时,说明 zip 已过期,需要重新打包。
+        /// (opt 刚由 zip 解包出来时,解包文件会保留原有写入时间,不会误判)
+        /// </summary>
+        private bool IsZipOutdated(int musicId)
+        {
+            var musicIdStr = musicId.ToString().PadLeft(4, '0');
+            var storagePath = Path.Combine(fumenFolderPath, $"fumen{musicIdStr}");
+            var optPath = Path.Combine(storagePath, "opt");
+            var zipPath = Path.Combine(storagePath, $"fumen{musicIdStr}.zip");
+
+            if (!Directory.Exists(optPath))
+                return false;
+            if (!System.IO.File.Exists(zipPath))
+                return true;
+
+            var zipTime = System.IO.File.GetLastWriteTimeUtc(zipPath);
+            foreach (var file in Directory.EnumerateFiles(optPath, "*.*", SearchOption.AllDirectories))
+            {
+                if (System.IO.File.GetLastWriteTimeUtc(file) > zipTime)
+                    return true;
+            }
+
+            return false;
         }
     }
 }

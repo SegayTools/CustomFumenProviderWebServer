@@ -30,6 +30,8 @@ namespace CustomFumenProviderWebServer.Controllers
                 return new(false, "no permission");
             }
 
+            using var _ = await fumenOperationLock.AcquireAsync(musicId);
+
             using var db = await fumenDataDBFactory.CreateDbContextAsync();
             using var trans = await db.Database.BeginTransactionAsync();
 
@@ -69,6 +71,8 @@ namespace CustomFumenProviderWebServer.Controllers
                 HttpContext.Response.StatusCode = 403;
                 return new(false, "no permission");
             }
+
+            using var _ = await fumenOperationLock.AcquireAsync(musicId);
 
             using var db = await fumenDataDBFactory.CreateDbContextAsync();
             using var trans = await db.Database.BeginTransactionAsync();

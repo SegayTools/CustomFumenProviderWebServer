@@ -42,7 +42,9 @@ namespace CustomFumenProviderWebServer.Services.FileCacheList
                 fileSystemWatcher.EnableRaisingEvents = false;
                 fileSystemWatcher.Created -= FileWatcherOnChanged;
                 fileSystemWatcher.Changed -= FileWatcherOnChanged;
+                fileSystemWatcher.Deleted -= FileWatcherOnChanged;
                 fileSystemWatcher.Renamed -= FileWatcherOnRenamed;
+                fileSystemWatcher.Error -= FileWatcherOnError;
                 fileSystemWatcher.Dispose();
                 fileSystemWatcher = null;
             }
@@ -63,7 +65,16 @@ namespace CustomFumenProviderWebServer.Services.FileCacheList
 
             fileSystemWatcher.Created += FileWatcherOnChanged;
             fileSystemWatcher.Changed += FileWatcherOnChanged;
+            fileSystemWatcher.Deleted += FileWatcherOnChanged;
             fileSystemWatcher.Renamed += FileWatcherOnRenamed;
+            fileSystemWatcher.Error += FileWatcherOnError;
+        }
+
+        private void FileWatcherOnError(object sender, ErrorEventArgs e)
+        {
+            //事件缓冲区溢出时会静默丢事件(大批量写入很常见),只能全量重建兜底
+            logger.LogError(e.GetException(), "file watcher error, force rebuild cache list");
+            _ = cacheListService.ForceRebuildAll();
         }
 
         private void FileWatcherOnChanged(object sender, FileSystemEventArgs e)

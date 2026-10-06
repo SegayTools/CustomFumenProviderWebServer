@@ -36,5 +36,27 @@ namespace CustomFumenProviderWebServer.Utils
             foreach (string subDir in Directory.GetDirectories(sourceDir))
                 CopyDirectory(subDir, Path.Combine(destinationDir, Path.GetFileName(subDir)));
         }
+
+        /// <summary>
+        /// 先写同目录下的临时文件,再原子替换目标文件。
+        /// 直接用 File.OpenWrite 覆盖已存在的文件不会截断,内容变短时会残留旧数据的尾部。
+        /// </summary>
+        public static async Task WriteAtomicAsync(string filePath, Func<Stream, Task> writeContent)
+        {
+            var tempFilePath = Path.Combine(Path.GetDirectoryName(filePath) ?? ".", $"{Path.GetFileName(filePath)}.{Guid.NewGuid():N}.tmp");
+
+            try
+            {
+                await using (var fs = new FileStream(tempFilePath, FileMode.CreateNew, FileAccess.Write, FileShare.None))
+                    await writeContent(fs);
+
+                File.Move(tempFilePath, filePath, true);
+            }
+            finally
+            {
+                if (File.Exists(tempFilePath))
+                    File.Delete(tempFilePath);
+            }
+        }
     }
 }

@@ -67,7 +67,7 @@ namespace CustomFumenProviderWebServer.Services.CacheManager
             return fumenInfo;
         }
 
-        private List<CacheFileInfo> Build(string optFolder, string relativeFolder)
+        private List<CacheFileInfo> Build(string optFolder, string relativeFolder, bool writeLog = true)
         {
             var list = new List<CacheFileInfo>();
             if (Directory.Exists(optFolder))
@@ -76,7 +76,8 @@ namespace CustomFumenProviderWebServer.Services.CacheManager
                 {
                     var relativePath = Path.GetRelativePath(relativeFolder, file);
                     var time = File.GetLastWriteTimeUtc(file);
-                    logger.LogInformation($"find cache file: {relativePath}, last write time: {time}");
+                    if (writeLog)
+                        logger.LogInformation($"find cache file: {relativePath}, last write time: {time}");
 
                     var info = new CacheFileInfo()
                     {
@@ -86,11 +87,34 @@ namespace CustomFumenProviderWebServer.Services.CacheManager
                     list.Add(info);
                 }
             }
-            else
+            else if (writeLog)
             {
                 logger.LogWarning($"opt folder not exist: {optFolder}");
             }
             return list;
+        }
+
+        /// <summary>
+        /// 比较缓存里的文件列表与磁盘现状。用于发现"绕过 API 直接改盘"的文件变更。
+        /// </summary>
+        private bool IsSameFileList(CacheFumenInfo cacheFumenInfo, FumenSet set)
+        {
+            var optFolder = Path.Combine(fumenFolderPath, $"fumen{set.MusicId}", "opt");
+            var currentFiles = Build(optFolder, fumenFolderPath, writeLog: false);
+
+            if (currentFiles.Count != cacheFumenInfo.CacheFileInfo.Count)
+                return false;
+
+            for (int i = 0; i < currentFiles.Count; i++)
+            {
+                var current = currentFiles[i];
+                var cached = cacheFumenInfo.CacheFileInfo[i];
+
+                if (current.RelativeFilePath != cached.RelativeFilePath || current.LastWriteTime != cached.LastWriteTime)
+                    return false;
+            }
+
+            return true;
         }
 
         public async Task ScanChanges(CancellationToken token)
@@ -105,6 +129,12 @@ namespace CustomFumenProviderWebServer.Services.CacheManager
                 {
                     if (cacheFumenInfo.UpdateTime != set.UpdateTime)
                         isBuild = true;
+                    else if (!IsSameFileList(cacheFumenInfo, set))
+                    {
+                        //数据库 UpdateTime 没变,但磁盘内容被直接改过(没过 API / 监听漏了事件)
+                        isBuild = true;
+                        logger.LogInformation($"detected out-of-band file change, rebuild CacheFumenInfo: {set.MusicId}");
+                    }
                 }
                 else
                     isBuild = true;

@@ -104,10 +104,16 @@ namespace CustomFumenProviderWebServer.Services
                 if (!File.Exists(fumenFilePath))
                     continue;
 
+                //定数内容非法时必须报错,不能静默当 0(否则会把难度值写坏)
+                if (!TryParseConstPart(fumenConstIntegerPart, out var constIntegerPart) || !TryParseConstPart(fumenConstFractionalPart, out var constFractionalPart))
+                    return new(false, $"FumenData[{idx}] in Music.xml has invalid FumenConst value (IntegerPart:'{fumenConstIntegerPart}', FractionalPart:'{fumenConstFractionalPart}')");
+                if (constIntegerPart is < 0 or > 99 || constFractionalPart is < 0 or > 99)
+                    return new(false, $"FumenData[{idx}] in Music.xml has out-of-range FumenConst value (IntegerPart:'{constIntegerPart}', FractionalPart:'{constFractionalPart}')");
+
                 var diff = new FumenDifficult();
                 diff.DifficultIndex = idx - 1;
                 diff.MusicId = set.MusicId;
-                diff.Level = (int.TryParse(fumenConstIntegerPart, out var d1) ? d1 : 0) + (int.TryParse(fumenConstFractionalPart, out var d2) ? d2 : 0) / 100.0f;
+                diff.Level = constIntegerPart + constFractionalPart / 100.0f;
 
                 var result = await ParseFumenFileInfo(diff, fumenFilePath);
                 if (!result.IsSuccess)
@@ -117,6 +123,20 @@ namespace CustomFumenProviderWebServer.Services
             }
 
             return new(true, string.Empty, set);
+        }
+
+        /// <summary>
+        /// 解析 Music.xml 的定数字段:空值按未设置(0)处理,但非空且不是整数时返回 false。
+        /// </summary>
+        private static bool TryParseConstPart(string text, out int value)
+        {
+            if (string.IsNullOrWhiteSpace(text))
+            {
+                value = 0;
+                return true;
+            }
+
+            return int.TryParse(text.Trim(), out value);
         }
 
         private static XElement GetNode(XNode document, params string[] fieldPaths)
@@ -173,9 +193,11 @@ namespace CustomFumenProviderWebServer.Services
                     var diff = set.FumenDifficults.FirstOrDefault(x => x.DifficultIndex == i);
                     if (diff is not null)
                     {
-                        fumenElement.XPathSelectElement("./FumenConstIntegerPart").Value = ((int)diff.Level).ToString();
-                        var fp = (int)Math.Round((diff.Level - (int)diff.Level) * 100 + 0.5);
-                        fumenElement.XPathSelectElement("./FumenConstFractionalPart").Value = fp.ToString();
+                        //用 decimal 精确换算:旧的 Math.Round(frac*100+0.5) 实际是向上取整,会让约一半的定数每次重写 +0.01。
+                        //固定写两位数字,保证按"百分位整数"或"小数点后数字"两种读法得到同一个值。
+                        var levelHundredths = (int)Math.Round((decimal)diff.Level * 100m, MidpointRounding.AwayFromZero);
+                        fumenElement.XPathSelectElement("./FumenConstIntegerPart").Value = (levelHundredths / 100).ToString();
+                        fumenElement.XPathSelectElement("./FumenConstFractionalPart").Value = (levelHundredths % 100).ToString("D2");
                         fumenElement.XPathSelectElement("./FumenFile/path").Value = $"{idStr}_0{i}.ogkr";
                     }
                     else
@@ -230,10 +252,17 @@ namespace CustomFumenProviderWebServer.Services
                         var match = BpmRegex.Match(line);
                         if (match.Success)
                         {
-                            var bpm = float.Parse(match.Groups[1].Value);
-                            isBpmSetup = true;
+                            if (float.TryParse(match.Groups[1].Value, out var bpm))
+                            {
+                                isBpmSetup = true;
 
-                            diff.Bpm = bpm;
+                                diff.Bpm = bpm;
+                            }
+                            else
+                            {
+                                //BPM 内容异常只告警,不让整次更新失败(文件此时已经落盘)
+                                logger.LogWarning($"can't parse BPM_DEF value in {fumenFilePath}: {match.Groups[1].Value}");
+                            }
                         }
                     }
 
