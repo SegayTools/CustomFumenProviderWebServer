@@ -891,6 +891,7 @@ namespace CustomFumenProviderWebServer.Controllers
             }
 
             using var _ = await fumenOperationLock.AcquireAsync(musicId);
+            await using var updateScope = await FumenUpdateScope.BeginAsync(fumenDataDBFactory, fumenStorageService, logger, musicId);
 
             var result = await WithDownloadedTempFile(jacketFormFile, file => ProcessJacketToFile(file, musicId));
             if (!result.IsSuccess)
@@ -900,7 +901,12 @@ namespace CustomFumenProviderWebServer.Controllers
             if (!result.IsSuccess)
                 return HttpStatus(result);
 
-            return HttpStatus(await UpdateInfoJsonUpdateTimeAndPublishState(musicId, PublishState.NotReadyForPending));
+            result = await UpdateInfoJsonUpdateTimeAndPublishState(musicId, PublishState.NotReadyForPending);
+            if (!result.IsSuccess)
+                return HttpStatus(result);
+
+            await updateScope.CommitAsync();
+            return HttpStatus(result);
         }
 
         /// <summary>
@@ -926,6 +932,8 @@ namespace CustomFumenProviderWebServer.Controllers
             if ((await db.FumenSets.FindAsync(musicId)) is not FumenSet set)
                 return HttpStatus(new(false, "FumenSet not found"));
 
+            await using var updateScope = await FumenUpdateScope.BeginAsync(fumenDataDBFactory, fumenStorageService, logger, musicId);
+
             var result = await WithDownloadedTempFile(audioFormFile, file => ProcessAudioToFile(file, audioFormFile?.FileName, musicId, set.Title));
             if (!result.IsSuccess)
                 return HttpStatus(result);
@@ -934,7 +942,12 @@ namespace CustomFumenProviderWebServer.Controllers
             if (!result.IsSuccess)
                 return HttpStatus(result);
 
-            return HttpStatus(await UpdateInfoJsonUpdateTimeAndPublishState(musicId, PublishState.NotReadyForPending));
+            result = await UpdateInfoJsonUpdateTimeAndPublishState(musicId, PublishState.NotReadyForPending);
+            if (!result.IsSuccess)
+                return HttpStatus(result);
+
+            await updateScope.CommitAsync();
+            return HttpStatus(result);
         }
 
 
@@ -949,12 +962,18 @@ namespace CustomFumenProviderWebServer.Controllers
             }
 
             using var _ = await fumenOperationLock.AcquireAsync(musicId);
+            await using var updateScope = await FumenUpdateScope.BeginAsync(fumenDataDBFactory, fumenStorageService, logger, musicId);
 
             var result = await UpdateZipFile(musicId);
             if (!result.IsSuccess)
                 return HttpStatus(result);
 
-            return HttpStatus(await UpdateInfoJsonUpdateTimeAndPublishState(musicId));
+            result = await UpdateInfoJsonUpdateTimeAndPublishState(musicId);
+            if (!result.IsSuccess)
+                return HttpStatus(result);
+
+            await updateScope.CommitAsync();
+            return HttpStatus(result);
         }
 
         /// <summary>
@@ -975,6 +994,7 @@ namespace CustomFumenProviderWebServer.Controllers
             }
 
             using var _ = await fumenOperationLock.AcquireAsync(musicId);
+            await using var updateScope = await FumenUpdateScope.BeginAsync(fumenDataDBFactory, fumenStorageService, logger, musicId);
 
             var result = await WithDownloadedTempFile(xmlFormFile, file => ProcessMusicXmlToFile(file, musicId));
             if (!result.IsSuccess)
@@ -984,7 +1004,12 @@ namespace CustomFumenProviderWebServer.Controllers
             if (!result.IsSuccess)
                 return HttpStatus(result);
 
-            return HttpStatus(await UpdateInfoJsonUpdateTimeAndPublishState(musicId, PublishState.NotReadyForPending));
+            result = await UpdateInfoJsonUpdateTimeAndPublishState(musicId, PublishState.NotReadyForPending);
+            if (!result.IsSuccess)
+                return HttpStatus(result);
+
+            await updateScope.CommitAsync();
+            return HttpStatus(result);
         }
 
         /// <summary>
@@ -1010,6 +1035,7 @@ namespace CustomFumenProviderWebServer.Controllers
                 return HttpStatus(new(false, $"diffIdx must be between 0 and 4, got {diffIdx}"));
 
             using var _ = await fumenOperationLock.AcquireAsync(musicId);
+            await using var updateScope = await FumenUpdateScope.BeginAsync(fumenDataDBFactory, fumenStorageService, logger, musicId);
 
             var result = await WithDownloadedTempFile(ogkrFormFile, file => ProcessFumenToFile(file, musicId, diffIdx, changeDiff));
             if (!result.IsSuccess)
@@ -1019,7 +1045,12 @@ namespace CustomFumenProviderWebServer.Controllers
             if (!result.IsSuccess)
                 return HttpStatus(result);
 
-            return HttpStatus(await UpdateInfoJsonUpdateTimeAndPublishState(musicId, PublishState.NotReadyForPending));
+            result = await UpdateInfoJsonUpdateTimeAndPublishState(musicId, PublishState.NotReadyForPending);
+            if (!result.IsSuccess)
+                return HttpStatus(result);
+
+            await updateScope.CommitAsync();
+            return HttpStatus(result);
         }
 
         /// <summary>
@@ -1040,6 +1071,7 @@ namespace CustomFumenProviderWebServer.Controllers
             }
 
             using var _ = await fumenOperationLock.AcquireAsync(musicId);
+            await using var updateScope = await FumenUpdateScope.BeginAsync(fumenDataDBFactory, fumenStorageService, logger, musicId);
 
             var ensureResult = fumenStorageService.EnsureOptFolder(musicId);
             if (!ensureResult.IsSuccess)
@@ -1057,6 +1089,7 @@ namespace CustomFumenProviderWebServer.Controllers
                     return HttpStatus(result);
             }
 
+            await updateScope.CommitAsync();
             return HttpStatus(result);
         }
 
