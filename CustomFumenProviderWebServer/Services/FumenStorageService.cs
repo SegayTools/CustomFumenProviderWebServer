@@ -4,6 +4,7 @@ using System.Text.Json;
 using CustomFumenProviderWebServer.Models;
 using CustomFumenProviderWebServer.Models.Tables;
 using CustomFumenProviderWebServer.Utils;
+using Microsoft.Extensions.DependencyInjection;
 
 namespace CustomFumenProviderWebServer.Services
 {
@@ -20,6 +21,7 @@ namespace CustomFumenProviderWebServer.Services
 
         private readonly string fumenFolderPath;
 
+        [ActivatorUtilitiesConstructor]
         public FumenStorageService() : this(Environment.GetEnvironmentVariable("FumenDirectory"))
         {
         }

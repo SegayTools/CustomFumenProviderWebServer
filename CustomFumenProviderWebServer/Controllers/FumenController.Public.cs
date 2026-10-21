@@ -33,6 +33,7 @@ namespace CustomFumenProviderWebServer.Controllers
         private readonly FumenOperationLock fumenOperationLock;
         private readonly AdminAuthService adminAuthService;
         private readonly FumenStateService fumenStateService;
+        private readonly FumenStorageService fumenStorageService;
         private readonly FumenRemovalService fumenRemovalService;
         private readonly IFileCacheListService fileCacheListService;
         private readonly string fumenFolderPath;
@@ -80,7 +81,7 @@ namespace CustomFumenProviderWebServer.Controllers
             return result;
         }
 
-        public FumenController(ILogger<FumenController> logger, IDbContextFactory<FumenDataDB> fumenDataDBFactory, AudioService audioService, JacketService jacketService, MusicXmlService musicXmlService, FumenOperationLock fumenOperationLock, AdminAuthService adminAuthService, FumenStateService fumenStateService, FumenRemovalService fumenRemovalService, IFileCacheListService fileCacheListService)
+        public FumenController(ILogger<FumenController> logger, IDbContextFactory<FumenDataDB> fumenDataDBFactory, AudioService audioService, JacketService jacketService, MusicXmlService musicXmlService, FumenOperationLock fumenOperationLock, AdminAuthService adminAuthService, FumenStateService fumenStateService, FumenStorageService fumenStorageService, FumenRemovalService fumenRemovalService, IFileCacheListService fileCacheListService)
         {
             this.logger = logger;
             this.fumenDataDBFactory = fumenDataDBFactory;
@@ -90,6 +91,7 @@ namespace CustomFumenProviderWebServer.Controllers
             this.fumenOperationLock = fumenOperationLock;
             this.adminAuthService = adminAuthService;
             this.fumenStateService = fumenStateService;
+            this.fumenStorageService = fumenStorageService;
             this.fumenRemovalService = fumenRemovalService;
             this.fileCacheListService = fileCacheListService;
             this.fumenFolderPath = Environment.GetEnvironmentVariable("FumenDirectory");
@@ -1043,7 +1045,9 @@ namespace CustomFumenProviderWebServer.Controllers
 
             using var _ = await fumenOperationLock.AcquireAsync(musicId);
 
-            MakeSureOptFolderExist(musicId);
+            var ensureResult = fumenStorageService.EnsureOptFolder(musicId);
+            if (!ensureResult.IsSuccess)
+                return HttpStatus(ensureResult);
 
             var result = await UpdateSetInfo(musicId, existingSet => Task.FromResult(reGenerateMusicXml));
             if (!result.IsSuccess)
@@ -1080,20 +1084,6 @@ namespace CustomFumenProviderWebServer.Controllers
             using var lockScope = await fumenOperationLock.AcquireAsync(musicId);
 
             return await fumenStateService.ReadyForPendingAsync(musicId);
-        }
-
-        private void MakeSureOptFolderExist(int musicId)
-        {
-            var musicIdStr = musicId.ToString().PadLeft(4, '0');
-
-            var storagePath = Path.Combine(fumenFolderPath, $"fumen{musicIdStr}");
-            var optPath = Path.Combine(storagePath, "opt");
-            var zipPath = Path.Combine(storagePath, $"fumen{musicIdStr}.zip");
-
-            if (Directory.Exists(optPath))
-                return;
-            Directory.CreateDirectory(optPath);
-            ZipFile.ExtractToDirectory(zipPath, optPath, true);
         }
 
         /// <summary>
