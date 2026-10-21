@@ -31,8 +31,8 @@ namespace CustomFumenProviderWebServer.Controllers
         private readonly JacketService jacketService;
         private readonly MusicXmlService musicXmlService;
         private readonly FumenOperationLock fumenOperationLock;
+        private readonly AdminAuthService adminAuthService;
         private readonly string fumenFolderPath;
-        private readonly SHA256 sha256 = SHA256.Create();
 
         private static readonly JsonSerializerOptions jsonSerializerOptions = new JsonSerializerOptions()
         {
@@ -77,7 +77,7 @@ namespace CustomFumenProviderWebServer.Controllers
             return result;
         }
 
-        public FumenController(ILogger<FumenController> logger, IDbContextFactory<FumenDataDB> fumenDataDBFactory, AudioService audioService, JacketService jacketService, MusicXmlService musicXmlService, FumenOperationLock fumenOperationLock)
+        public FumenController(ILogger<FumenController> logger, IDbContextFactory<FumenDataDB> fumenDataDBFactory, AudioService audioService, JacketService jacketService, MusicXmlService musicXmlService, FumenOperationLock fumenOperationLock, AdminAuthService adminAuthService)
         {
             this.logger = logger;
             this.fumenDataDBFactory = fumenDataDBFactory;
@@ -85,6 +85,7 @@ namespace CustomFumenProviderWebServer.Controllers
             this.jacketService = jacketService;
             this.musicXmlService = musicXmlService;
             this.fumenOperationLock = fumenOperationLock;
+            this.adminAuthService = adminAuthService;
             this.fumenFolderPath = Environment.GetEnvironmentVariable("FumenDirectory");
         }
 
@@ -241,7 +242,8 @@ namespace CustomFumenProviderWebServer.Controllers
             if (string.IsNullOrWhiteSpace(contract))
                 return check(new(false, "contract is empty"));
 
-            var tempFolder = TempPathUtils.GetNewTempFolder();
+            using var tempFolderScope = new TempFolderScope();
+            var tempFolder = tempFolderScope.Path;
             var jacketFilePath = Path.Combine(tempFolder, $"jacket" + Path.GetExtension(jacketFormFile.FileName));
             var audioFilePath = Path.Combine(tempFolder, $"audio" + Path.GetExtension(audioFormFile.FileName));
             var bscOgkrFilePath = Path.Combine(tempFolder, $"fumen1.ogkr");
@@ -464,7 +466,7 @@ namespace CustomFumenProviderWebServer.Controllers
             {
                 MusicId = newMusicId,
                 Contact = contract,
-                PasswordHash = Convert.ToHexString(sha256.ComputeHash(Encoding.UTF8.GetBytes(password)))
+                PasswordHash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(password)))
             };
 
             using var trans = await db.Database.BeginTransactionAsync();
@@ -506,10 +508,6 @@ namespace CustomFumenProviderWebServer.Controllers
             {
                 await trans.RollbackAsync();
                 return check(new(false, $"Register fumen data throw exception: {e.Message}"));
-            }
-            finally
-            {
-                Directory.Delete(tempFolder, true);
             }
         }
 
@@ -887,17 +885,21 @@ namespace CustomFumenProviderWebServer.Controllers
 
         async ValueTask<bool> VerifyPermission(string password, int? musicId = null)
         {
-            using var db = await fumenDataDBFactory.CreateDbContextAsync();
-            var hash = Convert.ToHexString(sha256.ComputeHash(Encoding.UTF8.GetBytes(password)));
-
-            if ("D7969812349992B265133AA1AA39BB82A7D5C9A3294C9ABDB337204C5CDE580F" == hash)
+            if (adminAuthService.VerifyAdminPassword(password))
                 return true;
 
             if (musicId is not int id)
                 return false;
+            if (string.IsNullOrEmpty(password))
+                return false;
+
+            using var db = await fumenDataDBFactory.CreateDbContextAsync();
+            var hash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(password)));
 
             if ((await db.FumenOwners.FindAsync(id)) is FumenOwner owner)
-                return hash == owner.PasswordHash;
+                return CryptographicOperations.FixedTimeEquals(
+                    Encoding.ASCII.GetBytes(hash),
+                    Encoding.ASCII.GetBytes(owner.PasswordHash ?? string.Empty));
 
             return false;
         }

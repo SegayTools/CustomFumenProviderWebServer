@@ -48,6 +48,7 @@ namespace CustomFumenProviderWebServer
             builder.Services.AddSingleton<MusicXmlService>();
             builder.Services.AddSingleton<AudioService>();
             builder.Services.AddSingleton<FumenOperationLock>();
+            builder.Services.AddSingleton<AdminAuthService>();
 
             builder.Services.AddSingleton<IEditorService, EditorService>();
             builder.Services.AddHostedService<EditorServiceUpdater>();
@@ -58,6 +59,9 @@ namespace CustomFumenProviderWebServer
             //----------------------------------------------------------
 
             var app = builder.Build();
+
+            //启动时读取并初始化管理员凭据(环境变量 ADMIN_PASSWORD 或默认哈希)
+            app.Services.GetRequiredService<AdminAuthService>();
 
             //setup db migrations.
             await CheckDBMigrations<FumenDataDB>(app.Services);

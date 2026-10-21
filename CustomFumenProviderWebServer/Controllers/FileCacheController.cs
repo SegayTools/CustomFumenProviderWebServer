@@ -2,6 +2,7 @@
 using CustomFumenProviderWebServer.Models;
 using CustomFumenProviderWebServer.Models.Responses;
 using CustomFumenProviderWebServer.Models.Tables;
+using CustomFumenProviderWebServer.Services;
 using CustomFumenProviderWebServer.Services.CacheManager;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
@@ -18,17 +19,19 @@ namespace CustomFumenProviderWebServer.Controllers
         private readonly ILogger<FileCacheController> logger;
         private readonly IFileCacheListService fileCacheListService;
         private readonly IDbContextFactory<FumenDataDB> dbContextFactory;
+        private readonly AdminAuthService adminAuthService;
         private static readonly JsonSerializerOptions jsonSerializerOptions = new JsonSerializerOptions(JsonSerializerDefaults.Web)
         {
             WriteIndented = true,
             Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping,
         };
 
-        public FileCacheController(ILogger<FileCacheController> logger, IFileCacheListService fileCacheListService, IDbContextFactory<FumenDataDB> dbContextFactory)
+        public FileCacheController(ILogger<FileCacheController> logger, IFileCacheListService fileCacheListService, IDbContextFactory<FumenDataDB> dbContextFactory, AdminAuthService adminAuthService)
         {
             this.logger = logger;
             this.fileCacheListService = fileCacheListService;
             this.dbContextFactory = dbContextFactory;
+            this.adminAuthService = adminAuthService;
         }
 
         [Route("list")]
@@ -51,10 +54,21 @@ namespace CustomFumenProviderWebServer.Controllers
             };
         }
 
+        /// <summary>
+        /// 强制重建全部文件缓存
+        /// </summary>
+        /// <param name="password">管理员审核密码</param>
+        /// <returns>重建结果</returns>
         [Route("forceUpdate")]
         [HttpPost]
-        public async Task<Result> ForceUpdate()
+        public async Task<Result> ForceUpdate([FromForm] string password)
         {
+            if (!adminAuthService.VerifyAdminPassword(password))
+            {
+                HttpContext.Response.StatusCode = StatusCodes.Status403Forbidden;
+                return new Result(false, "no permission");
+            }
+
             await fileCacheListService.ForceRebuildAll();
             return new Result(true);
         }
