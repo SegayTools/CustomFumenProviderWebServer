@@ -22,7 +22,7 @@ namespace CustomFumenProviderWebServer.Controllers
 {
     [ApiController]
     [Route("api")]
-    [RequestSizeLimit(300_000_000)]
+    [RequestSizeLimit(FumenUploadLimits.MaxRequestBodySize)]
     public partial class FumenController : ControllerBase
     {
         private readonly ILogger<FumenController> logger;

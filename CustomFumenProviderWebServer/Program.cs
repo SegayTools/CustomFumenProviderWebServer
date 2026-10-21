@@ -3,6 +3,8 @@ using CustomFumenProviderWebServer.Services;
 using CustomFumenProviderWebServer.Services.CacheManager;
 using CustomFumenProviderWebServer.Services.Editor;
 using CustomFumenProviderWebServer.Services.FileCacheList;
+using CustomFumenProviderWebServer.Utils;
+using Microsoft.AspNetCore.Http.Features;
 using Microsoft.AspNetCore.StaticFiles;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.FileProviders;
@@ -19,6 +21,7 @@ namespace CustomFumenProviderWebServer
             var builder = WebApplication.CreateBuilder(args);
 
             builder.Services.AddControllers();
+            builder.Services.Configure<FormOptions>(options => FumenUploadLimits.ConfigureFormOptions(options));
 
             var fumenFolderPath = Environment.GetEnvironmentVariable("FumenDirectory");
             if (string.IsNullOrWhiteSpace(fumenFolderPath))
