@@ -32,6 +32,8 @@ namespace CustomFumenProviderWebServer.Controllers
         private readonly MusicXmlService musicXmlService;
         private readonly FumenOperationLock fumenOperationLock;
         private readonly AdminAuthService adminAuthService;
+        private readonly FumenRemovalService fumenRemovalService;
+        private readonly IFileCacheListService fileCacheListService;
         private readonly string fumenFolderPath;
 
         private static readonly JsonSerializerOptions jsonSerializerOptions = new JsonSerializerOptions()
@@ -77,7 +79,7 @@ namespace CustomFumenProviderWebServer.Controllers
             return result;
         }
 
-        public FumenController(ILogger<FumenController> logger, IDbContextFactory<FumenDataDB> fumenDataDBFactory, AudioService audioService, JacketService jacketService, MusicXmlService musicXmlService, FumenOperationLock fumenOperationLock, AdminAuthService adminAuthService)
+        public FumenController(ILogger<FumenController> logger, IDbContextFactory<FumenDataDB> fumenDataDBFactory, AudioService audioService, JacketService jacketService, MusicXmlService musicXmlService, FumenOperationLock fumenOperationLock, AdminAuthService adminAuthService, FumenRemovalService fumenRemovalService, IFileCacheListService fileCacheListService)
         {
             this.logger = logger;
             this.fumenDataDBFactory = fumenDataDBFactory;
@@ -86,6 +88,8 @@ namespace CustomFumenProviderWebServer.Controllers
             this.musicXmlService = musicXmlService;
             this.fumenOperationLock = fumenOperationLock;
             this.adminAuthService = adminAuthService;
+            this.fumenRemovalService = fumenRemovalService;
+            this.fileCacheListService = fileCacheListService;
             this.fumenFolderPath = Environment.GetEnvironmentVariable("FumenDirectory");
         }
 

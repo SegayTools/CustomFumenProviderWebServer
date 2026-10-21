@@ -49,6 +49,8 @@ namespace CustomFumenProviderWebServer
             builder.Services.AddSingleton<AudioService>();
             builder.Services.AddSingleton<FumenOperationLock>();
             builder.Services.AddSingleton<AdminAuthService>();
+            builder.Services.AddSingleton<FumenStorageService>();
+            builder.Services.AddSingleton<FumenRemovalService>();
 
             builder.Services.AddSingleton<IEditorService, EditorService>();
             builder.Services.AddHostedService<EditorServiceUpdater>();

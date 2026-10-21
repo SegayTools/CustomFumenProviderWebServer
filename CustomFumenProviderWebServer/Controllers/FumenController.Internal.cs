@@ -72,35 +72,13 @@ namespace CustomFumenProviderWebServer.Controllers
                 return new(false, "no permission");
             }
 
-            using var _ = await fumenOperationLock.AcquireAsync(musicId);
+            using var lockScope = await fumenOperationLock.AcquireAsync(musicId);
 
-            using var db = await fumenDataDBFactory.CreateDbContextAsync();
-            using var trans = await db.Database.BeginTransactionAsync();
+            var result = await fumenRemovalService.RemoveAsync(musicId);
+            if (result.IsSuccess)
+                fileCacheListService.CacheFumenMap.TryRemove(musicId, out _);
 
-            try
-            {
-                var any = false;
-                void delete<T>(List<T> removes)
-                {
-                    any = any || removes.Count > 0;
-                    foreach (var cFumen in removes)
-                        db.Remove(cFumen);
-                }
-
-                delete(await db.FumenSets.Where(x => x.MusicId == musicId).ToListAsync());
-                delete(await db.FumenDifficults.Where(x => x.MusicId == musicId).ToListAsync());
-                delete(await db.FumenOwners.Where(x => x.MusicId == musicId).ToListAsync());
-
-                await db.SaveChangesAsync();
-                await trans.CommitAsync();
-
-                return new(any);
-            }
-            catch (Exception e)
-            {
-                await trans.RollbackAsync();
-                return new(false, e.Message);
-            }
+            return new(result.IsSuccess, result.Message);
         }
 
     }
