@@ -347,7 +347,7 @@ namespace CustomFumenProviderWebServer.Controllers
                 var audioFolder = Path.Combine(optTempFolder, "musicsource", $"musicsource{musicIdStr}");
                 Directory.CreateDirectory(audioFolder);
 
-                if (audioFilePath.EndsWith(".zip"))
+                if (AudioFileTypes.IsZip(audioFilePath))
                 {
                     using var fs = System.IO.File.OpenRead(audioFilePath);
                     using var zip = new ZipArchive(fs, ZipArchiveMode.Read, true);
@@ -361,14 +361,14 @@ namespace CustomFumenProviderWebServer.Controllers
                         return check(new(false, "audio.zip not contains audio file.")); //fuck
 
                     //if audio.zip contains .acb(and .awb), copy them to opt/musicsource folder directly.
-                    if (zipFiles.FirstOrDefault(x => x.EndsWith(".acb")) is string acbFile)
+                    if (AudioFileTypes.FindFileWithExtension(unpackFolder, ".acb") is string acbFile)
                     {
                         var dstAcbFile = Path.Combine(audioFolder, $"music{musicIdStr}.acb");
                         System.IO.File.Copy(acbFile, dstAcbFile);
 
                         var dstAwbFile = Path.Combine(audioFolder, $"music{musicIdStr}.awb");
-                        var awbFile = Path.ChangeExtension(acbFile, ".awb");
-                        if (System.IO.File.Exists(awbFile))
+                        var awbFile = AudioFileTypes.FindFileWithExtension(unpackFolder, ".awb");
+                        if (awbFile is not null)
                             System.IO.File.Copy(awbFile, dstAwbFile);
 
                         await audioService.GenerateMusicSourceXmlAsync(audioFolder, set.MusicId, set.Title);
@@ -782,7 +782,7 @@ namespace CustomFumenProviderWebServer.Controllers
                 Directory.CreateDirectory(audioFolder);
 
                 //传入的是系统临时文件(扩展名是 .tmp),必须用上传时的原始文件名判断是否 zip
-                if (string.Equals(Path.GetExtension(originalFileName ?? string.Empty), ".zip", StringComparison.OrdinalIgnoreCase))
+                if (AudioFileTypes.IsZip(originalFileName ?? string.Empty))
                 {
                     using var fs = System.IO.File.OpenRead(inputFile);
                     using var zip = new ZipArchive(fs, ZipArchiveMode.Read, true);
@@ -796,14 +796,14 @@ namespace CustomFumenProviderWebServer.Controllers
                         return new(false, "audio.zip not contains audio file."); //fuck
 
                     //if audio.zip contains .acb(and .awb), copy them to opt/musicsource folder directly.
-                    if (zipFiles.FirstOrDefault(x => x.EndsWith(".acb")) is string acbFile)
+                    if (AudioFileTypes.FindFileWithExtension(unpackFolder, ".acb") is string acbFile)
                     {
                         var dstAcbFile = Path.Combine(audioFolder, $"music{musicIdStr}.acb");
                         System.IO.File.Copy(acbFile, dstAcbFile);
 
                         var dstAwbFile = Path.Combine(audioFolder, $"music{musicIdStr}.awb");
-                        var awbFile = Path.ChangeExtension(acbFile, ".awb");
-                        if (System.IO.File.Exists(awbFile))
+                        var awbFile = AudioFileTypes.FindFileWithExtension(unpackFolder, ".awb");
+                        if (awbFile is not null)
                             System.IO.File.Copy(awbFile, dstAwbFile);
 
                         await audioService.GenerateMusicSourceXmlAsync(audioFolder, musicId, title);
