@@ -55,7 +55,7 @@ namespace CustomFumenProviderWebServer.Controllers
         [HttpPut]
         [Route("updateEditorZip")]
         [RequestSizeLimit(FumenUploadLimits.MaxRequestBodySize)]
-        public async Task<ActionResult<Result>> UpdateEditorZip([FromForm] IFormFile zipFormFile, [FromForm] string password, [FromForm] string branch = null)
+        public async Task<ActionResult<Result>> UpdateEditorZip(IFormFile zipFormFile, [FromForm] string password, [FromForm] string branch = null)
         {
             if (!adminAuthService.VerifyAdminPassword(password))
                 return StatusCode(StatusCodes.Status403Forbidden, new Result(false, "no permission"));
