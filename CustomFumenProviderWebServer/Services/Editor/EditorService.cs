@@ -17,17 +17,41 @@ namespace CustomFumenProviderWebServer.Services.Editor
 
         /// <summary>
         /// 以引用替换的方式发布新资源，读取方不会看到半更新的对象。
+        /// 只有版本号严格高于目标当前版本时才会覆盖，避免旧版本回退。
         /// </summary>
-        public void UpdateEditorResource(bool requireMasterBranch, EditorResource resource)
+        public bool UpdateEditorResource(bool requireMasterBranch, EditorResource resource)
         {
             lock (sync)
             {
-                if (requireMasterBranch && resource.LocalCreateAt >= masterEditorResource.LocalCreateAt)
-                    masterEditorResource = resource;
+                var updated = false;
 
-                if (resource.LocalCreateAt >= latestEditorResource.LocalCreateAt)
+                if (requireMasterBranch && IsNewer(resource, masterEditorResource))
+                {
+                    masterEditorResource = resource;
+                    updated = true;
+                }
+
+                if (IsNewer(resource, latestEditorResource))
+                {
                     latestEditorResource = resource;
+                    updated = true;
+                }
+
+                return updated;
             }
+        }
+
+        private static bool IsNewer(EditorResource candidate, EditorResource current)
+        {
+            var candidateVersion = candidate.VersionInfo?.Version;
+            if (candidateVersion is null)
+                return false;
+
+            var currentVersion = current.VersionInfo?.Version;
+            if (currentVersion is null)
+                return true;
+
+            return candidateVersion.CompareTo(currentVersion) > 0;
         }
     }
 }

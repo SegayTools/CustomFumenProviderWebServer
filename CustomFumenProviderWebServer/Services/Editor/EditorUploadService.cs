@@ -44,7 +44,9 @@ namespace CustomFumenProviderWebServer.Services.Editor
                 },
             };
 
-            editorService.UpdateEditorResource(isMasterBranch, resource);
+            if (!editorService.UpdateEditorResource(isMasterBranch, resource))
+                return new(false, $"uploaded version {version} is not newer than the current version");
+
             return new(true);
         }
 

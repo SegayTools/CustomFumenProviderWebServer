@@ -85,8 +85,10 @@ namespace CustomFumenProviderWebServer.Services.Editor
                             if (EditorArtifactName.TryParse(artifact.Name, out var version))
                                 resource.VersionInfo.Version = version;
 
-                            editorService.UpdateEditorResource(requireMasterBranch, resource);
-                            logger.LogInformation($"fetch editor new version, requireMasterBranch:{requireMasterBranch}, version:{resource.VersionInfo.Version}, date:{resource.LocalFileName}, branch:{resource.VersionInfo.Branch}");
+                            if (editorService.UpdateEditorResource(requireMasterBranch, resource))
+                                logger.LogInformation($"fetch editor new version, requireMasterBranch:{requireMasterBranch}, version:{resource.VersionInfo.Version}, date:{resource.LocalFileName}, branch:{resource.VersionInfo.Branch}");
+                            else
+                                logger.LogInformation($"ignore editor artifact with non-newer version, requireMasterBranch:{requireMasterBranch}, version:{resource.VersionInfo.Version}, date:{resource.LocalFileName}");
                             return;
                         }
                     }

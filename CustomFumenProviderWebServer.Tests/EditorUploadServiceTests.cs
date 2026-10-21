@@ -105,6 +105,45 @@ public class EditorUploadServiceTests
         Assert.False(result.IsSuccess);
     }
 
+    [Fact]
+    public void Upload_OlderVersion_IsRejected()
+    {
+        var editorService = new EditorService();
+        var service = new EditorUploadService(editorService);
+
+        Assert.True(service.Upload("OngekiFumenEditor_2.0.0_develop.zip", CreateZip(), "develop", T0).IsSuccess);
+        var result = service.Upload("OngekiFumenEditor_1.0.0_develop.zip", CreateZip(), "develop", T0.AddMinutes(1));
+
+        Assert.False(result.IsSuccess);
+        Assert.Equal(new Version(2, 0, 0), editorService.GetEditorResource(false).VersionInfo.Version);
+    }
+
+    [Fact]
+    public void Upload_SameVersion_IsRejected()
+    {
+        var editorService = new EditorService();
+        var service = new EditorUploadService(editorService);
+
+        Assert.True(service.Upload("OngekiFumenEditor_1.0.0_develop.zip", CreateZip(), "develop", T0).IsSuccess);
+        var result = service.Upload("OngekiFumenEditor_1.0.0_develop.zip", CreateZip(), "develop", T0.AddMinutes(1));
+
+        Assert.False(result.IsSuccess);
+        Assert.Equal(new Version(1, 0, 0), editorService.GetEditorResource(false).VersionInfo.Version);
+    }
+
+    [Fact]
+    public void Upload_OlderMaster_IsRejected()
+    {
+        var editorService = new EditorService();
+        var service = new EditorUploadService(editorService);
+
+        Assert.True(service.Upload("OngekiFumenEditor_2.0.0_master.zip", CreateZip(), "master", T0).IsSuccess);
+        var result = service.Upload("OngekiFumenEditor_1.0.0_master.zip", CreateZip(), "master", T0.AddMinutes(1));
+
+        Assert.False(result.IsSuccess);
+        Assert.Equal(new Version(2, 0, 0), editorService.GetEditorResource(true).VersionInfo.Version);
+    }
+
     private static byte[] CreateZip()
     {
         using var ms = new MemoryStream();
