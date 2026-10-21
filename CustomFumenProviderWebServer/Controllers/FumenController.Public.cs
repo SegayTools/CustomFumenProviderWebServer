@@ -132,15 +132,7 @@ namespace CustomFumenProviderWebServer.Controllers
                 list = list.OrderByDescending(x => x.UpdateTime);
             }
 
-            if (minFilterLevel is float minLevel)
-            {
-                list = list.Where(x => x.FumenDifficults.Any(d => d.Level >= minLevel));
-            }
-
-            if (maxFilterLevel is float maxLevel)
-            {
-                list = list.Where(x => x.FumenDifficults.Any(d => d.Level <= maxLevel));
-            }
+            list = list.ApplyLevelFilter(minFilterLevel, maxFilterLevel);
 
             //分页在数据库侧完成,避免把整张表读进内存
             var response = new FumenQueryResponse()
