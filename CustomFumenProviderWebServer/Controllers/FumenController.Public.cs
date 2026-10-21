@@ -293,7 +293,7 @@ namespace CustomFumenProviderWebServer.Controllers
 
             //step1.5: re-alloc new musicId
             var newMusicId = set.MusicId + 20000;
-            set.MusicId = newMusicId;
+            FumenSetNormalizer.ApplyMusicId(set, newMusicId);
 
             if ((await db.FumenSets.FindAsync(newMusicId)) is not null)
                 return check(new(false, "musicId is conflict."));
@@ -579,7 +579,7 @@ namespace CustomFumenProviderWebServer.Controllers
                     await db.SaveChangesAsync();
                 }
 
-                set.MusicId = musicId;
+                FumenSetNormalizer.ApplyMusicId(set, musicId);
                 set.PublishState = publicState;
                 set.Owner = owner;
                 set.UpdateTime = DateTime.Now;
@@ -642,7 +642,7 @@ namespace CustomFumenProviderWebServer.Controllers
 
                 var set = result.Data;
                 //modify musicId
-                set.MusicId = musicId;
+                FumenSetNormalizer.ApplyMusicId(set, musicId);
                 set.UpdateTime = DateTime.Now;
 
                 var tempXmlFilePath = Path.Combine(tempFolder, "Music.xml");
