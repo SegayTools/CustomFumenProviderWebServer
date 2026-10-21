@@ -30,30 +30,10 @@ namespace CustomFumenProviderWebServer.Controllers
                 return new(false, "no permission");
             }
 
-            using var _ = await fumenOperationLock.AcquireAsync(musicId);
+            using var lockScope = await fumenOperationLock.AcquireAsync(musicId);
 
-            using var db = await fumenDataDBFactory.CreateDbContextAsync();
-            using var trans = await db.Database.BeginTransactionAsync();
-
-            try
-            {
-                if ((await db.FumenSets.FindAsync(musicId)) is FumenSet cSet)
-                {
-                    cSet.PublishState = Models.PublishState.Published;
-                    cSet.UpdateTime = DateTime.Now;
-
-                    await db.SaveChangesAsync();
-                    await trans.CommitAsync();
-                    return new(true);
-                }
-
-                return new(false, "fumen not found");
-            }
-            catch (Exception e)
-            {
-                await trans.RollbackAsync();
-                return new(false, e.Message);
-            }
+            var result = await fumenStateService.PublishAsync(musicId);
+            return new(result.IsSuccess, result.Message);
         }
 
         /// <summary>

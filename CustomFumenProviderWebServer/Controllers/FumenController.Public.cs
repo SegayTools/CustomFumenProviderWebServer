@@ -32,6 +32,7 @@ namespace CustomFumenProviderWebServer.Controllers
         private readonly MusicXmlService musicXmlService;
         private readonly FumenOperationLock fumenOperationLock;
         private readonly AdminAuthService adminAuthService;
+        private readonly FumenStateService fumenStateService;
         private readonly FumenRemovalService fumenRemovalService;
         private readonly IFileCacheListService fileCacheListService;
         private readonly string fumenFolderPath;
@@ -79,7 +80,7 @@ namespace CustomFumenProviderWebServer.Controllers
             return result;
         }
 
-        public FumenController(ILogger<FumenController> logger, IDbContextFactory<FumenDataDB> fumenDataDBFactory, AudioService audioService, JacketService jacketService, MusicXmlService musicXmlService, FumenOperationLock fumenOperationLock, AdminAuthService adminAuthService, FumenRemovalService fumenRemovalService, IFileCacheListService fileCacheListService)
+        public FumenController(ILogger<FumenController> logger, IDbContextFactory<FumenDataDB> fumenDataDBFactory, AudioService audioService, JacketService jacketService, MusicXmlService musicXmlService, FumenOperationLock fumenOperationLock, AdminAuthService adminAuthService, FumenStateService fumenStateService, FumenRemovalService fumenRemovalService, IFileCacheListService fileCacheListService)
         {
             this.logger = logger;
             this.fumenDataDBFactory = fumenDataDBFactory;
@@ -88,6 +89,7 @@ namespace CustomFumenProviderWebServer.Controllers
             this.musicXmlService = musicXmlService;
             this.fumenOperationLock = fumenOperationLock;
             this.adminAuthService = adminAuthService;
+            this.fumenStateService = fumenStateService;
             this.fumenRemovalService = fumenRemovalService;
             this.fileCacheListService = fileCacheListService;
             this.fumenFolderPath = Environment.GetEnvironmentVariable("FumenDirectory");
@@ -720,36 +722,9 @@ namespace CustomFumenProviderWebServer.Controllers
 
         }
 
-        private async ValueTask<Result> UpdateInfoJsonUpdateTimeAndPublishState(int musicId, PublishState? changeState = default)
+        private ValueTask<Result> UpdateInfoJsonUpdateTimeAndPublishState(int musicId, PublishState? changeState = default)
         {
-            var musicIdStr = musicId.ToString().PadLeft(4, '0');
-            var storagePath = Path.Combine(fumenFolderPath, $"fumen{musicIdStr}");
-
-            using var db = await fumenDataDBFactory.CreateDbContextAsync();
-            using var trans = await db.Database.BeginTransactionAsync();
-
-            try
-            {
-                if ((await db.FumenSets.FindAsync(musicId)) is FumenSet set)
-                {
-                    set.UpdateTime = DateTime.Now;
-                    if (changeState is { } state)
-                        set.PublishState = state;
-
-                    await db.SaveChangesAsync();
-
-                    var jsonFile = Path.Combine(storagePath, $"info.json");
-                    await FileUtils.WriteAtomicAsync(jsonFile, async fs =>
-                        await JsonSerializer.SerializeAsync(fs, set, jsonSerializerOptions));
-                    await trans.CommitAsync();
-                }
-                return new(true);
-            }
-            catch (Exception e)
-            {
-                trans.Rollback();
-                return new(false, $"update set and info.json throw exception: {e.Message}");
-            }
+            return new ValueTask<Result>(fumenStateService.UpdateStateAsync(musicId, changeState));
         }
 
         async ValueTask<Result> ProcessFumenToFile(string ogkrFile, int musicId, int diffIdx, float? changeDiff)
@@ -1102,18 +1077,9 @@ namespace CustomFumenProviderWebServer.Controllers
                 return new(false, "no permission");
             }
 
-            using var db = await fumenDataDBFactory.CreateDbContextAsync();
-            if ((await db.FumenSets.FindAsync(musicId)) is not FumenSet set)
-                return new(false, "FumenSet not found");
+            using var lockScope = await fumenOperationLock.AcquireAsync(musicId);
 
-            if (set.PublishState == PublishState.Published)
-                return new(false, "publishState is Published, cannot set to Pending");
-
-            set.PublishState = PublishState.Pending;
-            set.UpdateTime = DateTime.Now;
-            await db.SaveChangesAsync();
-
-            return new(true);
+            return await fumenStateService.ReadyForPendingAsync(musicId);
         }
 
         private void MakeSureOptFolderExist(int musicId)
