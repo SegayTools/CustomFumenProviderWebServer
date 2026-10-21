@@ -23,7 +23,7 @@ namespace CustomFumenProviderWebServer.Services
             var binFolder = "";
             var resourcePath = "";
 
-            binFolder = Path.GetTempFileName() + "_AcbGeneratorFuck";
+            binFolder = TempDirectoryFactory.Create("AcbGeneratorFuck");
 
             if (Environment.OSVersion.Platform == PlatformID.Unix)
             {
@@ -37,8 +37,6 @@ namespace CustomFumenProviderWebServer.Services
                 acbGeneratorBinPath = Path.Combine(binFolder, "AcbGeneratorFuck.Console.exe");
                 acb2wavBinPath = Path.Combine(binFolder, "acb2wavs.exe");
             }
-
-            Directory.CreateDirectory(binFolder);
 
             using var zip = new ZipArchive(typeof(JacketService).Assembly.GetManifestResourceStream(resourcePath));
             logger.LogInformation($"extract {resourcePath} to {binFolder}");

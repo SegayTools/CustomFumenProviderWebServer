@@ -21,7 +21,7 @@ namespace CustomFumenProviderWebServer.Services
             var binFolder = "";
             var resourcePath = "";
 
-            binFolder = Path.GetTempFileName() + "_JacketGenerator";
+            binFolder = TempDirectoryFactory.Create("JacketGenerator");
 
             if (Environment.OSVersion.Platform == PlatformID.Unix)
             {
@@ -33,9 +33,6 @@ namespace CustomFumenProviderWebServer.Services
                 resourcePath = "CustomFumenProviderWebServer.Resources.Jacket.win.zip";
                 binPath = Path.Combine(binFolder, "JacketGenerator.exe");
             }
-
-            File.Delete(binFolder);
-            Directory.CreateDirectory(binFolder);
 
             using var zip = new ZipArchive(typeof(JacketService).Assembly.GetManifestResourceStream(resourcePath));
             logger.LogInformation($"extract {resourcePath} to {binFolder}");
