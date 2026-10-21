@@ -112,7 +112,7 @@ namespace CustomFumenProviderWebServer.Services.FileCacheList
 
         private async Task OnUpdate(CancellationToken token)
         {
-            await cacheListService.ForceRebuildAll();
+            await CacheRebuildRetry.RebuildUntilSuccessAsync(cacheListService, logger, token);
 
             while (!token.IsCancellationRequested)
             {
@@ -120,6 +120,10 @@ namespace CustomFumenProviderWebServer.Services.FileCacheList
                 {
                     await cacheListService.ScanChanges(token);
                     await Task.Delay(TimeSpan.FromMinutes(1), token);
+                }
+                catch (OperationCanceledException) when (token.IsCancellationRequested)
+                {
+                    break;
                 }
                 catch (Exception e)
                 {
