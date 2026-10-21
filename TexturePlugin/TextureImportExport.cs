@@ -16,7 +16,7 @@ namespace TexturePlugin
             if (decData == null)
                 return false;
 
-            Image<Rgba32> image = Image.LoadPixelData<Rgba32>(decData, width, height);
+            using var image = Image.LoadPixelData<Rgba32>(decData, width, height);
             image.Mutate(i => i.Flip(FlipMode.Vertical));
             image.SaveAsPng(file);
 
