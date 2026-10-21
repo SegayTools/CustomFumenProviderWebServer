@@ -1,18 +1,14 @@
-﻿
 using CustomFumenProviderWebServer.Models;
 using Microsoft.Extensions.Logging;
 using System.Net.Http;
-using System.Text.RegularExpressions;
 
 namespace CustomFumenProviderWebServer.Services.Editor
 {
     public class EditorServiceUpdater : IHostedService
     {
-        private readonly string folder;
         private readonly HttpClient httpClient;
         private readonly ILogger<EditorService> logger;
         private readonly IEditorService editorService;
-        private readonly Regex versionRegex = new Regex(@"OngekiFumenEditor_([\d\.]+)_");
         private Timer timer;
 
         public EditorServiceUpdater(ILogger<EditorService> logger, IEditorService editorService)
@@ -31,24 +27,23 @@ namespace CustomFumenProviderWebServer.Services.Editor
         {
             try
             {
-                //logger.LogInformation($"start fetch editor resource");
                 await Task.WhenAll([
-                    UpdateEditorResource(editorService.GetEditorResource(false), false),
-                    UpdateEditorResource(editorService.GetEditorResource(true), true)
+                    UpdateEditorResource(false),
+                    UpdateEditorResource(true)
                 ]);
             }
             catch (Exception e)
             {
-            }
-            finally
-            {
+                logger.LogError(e, "fetch editor resource failed");
             }
         }
 
-        private async Task UpdateEditorResource(EditorResource editorResource, bool requireMasterBranch)
+        private async Task UpdateEditorResource(bool requireMasterBranch)
         {
             try
             {
+                var currentResource = editorService.GetEditorResource(requireMasterBranch);
+
                 var url = @"https://api.github.com/repos/NyagekiFumenProject/OngekiFumenEditor/actions/runs?status=success&per_page=1";
                 if (requireMasterBranch)
                     url += "&branch=master";
@@ -59,7 +54,7 @@ namespace CustomFumenProviderWebServer.Services.Editor
                 var runsResp = await resp.Content.ReadFromJsonAsync<GithubActionListAction>();
                 if (runsResp?.WorkflowRuns.FirstOrDefault() is GithubActionWorkflowRun workflowRun)
                 {
-                    if (workflowRun.CreatedAt > editorResource.LocalCreateAt)
+                    if (workflowRun.CreatedAt > currentResource.LocalCreateAt)
                     {
                         //get artifact
                         req = new HttpRequestMessage(HttpMethod.Get, workflowRun.ArtifactsUrl);
@@ -74,25 +69,24 @@ namespace CustomFumenProviderWebServer.Services.Editor
 
                             var content = await resp.Content.ReadAsByteArrayAsync();
 
-                            //update
-                            editorResource.LocalFileName = artifact.Name + ".zip";
-                            editorResource.ZipContent = content;
-                            editorResource.LocalCreateAt = workflowRun.CreatedAt;
-
-                            editorResource.VersionInfo = new()
+                            var resource = new EditorResource
                             {
-                                Time = workflowRun.CreatedAt,
-                                Branch = workflowRun.HeadBranch,
-                                FileSize = content.Length
+                                LocalFileName = artifact.Name + ".zip",
+                                ZipContent = content,
+                                LocalCreateAt = workflowRun.CreatedAt,
+                                VersionInfo = new VersionInfo
+                                {
+                                    Time = workflowRun.CreatedAt,
+                                    Branch = workflowRun.HeadBranch,
+                                    FileSize = content.Length,
+                                },
                             };
 
-                            var match = versionRegex.Match(artifact.Name);
-                            if (match.Success)
-                                editorResource.VersionInfo.Version = Version.Parse(match.Groups[1].Value);
-                            else
-                                editorResource.VersionInfo.Version = default;
+                            if (EditorArtifactName.TryParse(artifact.Name, out var version))
+                                resource.VersionInfo.Version = version;
 
-                            logger.LogInformation($"fetch editor new version, requireMasterBranch:{requireMasterBranch}, version:{editorResource.VersionInfo.Version}, date:{editorResource.LocalFileName}, branch:{editorResource.VersionInfo.Branch}");
+                            editorService.UpdateEditorResource(requireMasterBranch, resource);
+                            logger.LogInformation($"fetch editor new version, requireMasterBranch:{requireMasterBranch}, version:{resource.VersionInfo.Version}, date:{resource.LocalFileName}, branch:{resource.VersionInfo.Branch}");
                             return;
                         }
                     }
@@ -106,12 +100,22 @@ namespace CustomFumenProviderWebServer.Services.Editor
 
         public Task StartAsync(CancellationToken cancellationToken)
         {
+            var pollingEnabled = Environment.GetEnvironmentVariable("EDITOR_UPDATE_POLLING_ENABLED");
+            if (string.Equals(pollingEnabled, "false", StringComparison.OrdinalIgnoreCase))
+            {
+                logger.LogInformation("editor GitHub polling is disabled; waiting for pushed zip");
+                return Task.CompletedTask;
+            }
+
             timer = new Timer(_ => OnFetchUpdate(), default, TimeSpan.Zero, TimeSpan.FromMinutes(1));
             return Task.CompletedTask;
         }
 
         public async Task StopAsync(CancellationToken cancellationToken)
         {
+            if (timer is null)
+                return;
+
             await timer.DisposeAsync();
         }
     }

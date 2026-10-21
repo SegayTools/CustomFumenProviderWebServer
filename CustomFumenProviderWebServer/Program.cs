@@ -57,6 +57,7 @@ namespace CustomFumenProviderWebServer
             builder.Services.AddSingleton<FumenStateService>();
 
             builder.Services.AddSingleton<IEditorService, EditorService>();
+            builder.Services.AddSingleton<EditorUploadService>();
             builder.Services.AddHostedService<EditorServiceUpdater>();
 
             builder.Services.AddSingleton<IFileCacheListService, FileCacheListService>();
