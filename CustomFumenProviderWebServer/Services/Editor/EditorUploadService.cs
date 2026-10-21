@@ -1,4 +1,3 @@
-using System.IO.Compression;
 using CustomFumenProviderWebServer.Models;
 
 namespace CustomFumenProviderWebServer.Services.Editor
@@ -25,7 +24,7 @@ namespace CustomFumenProviderWebServer.Services.Editor
                 return new(false, "file must be a .zip");
             if (!EditorArtifactName.TryParse(safeFileName, out var version))
                 return new(false, "file name must match OngekiFumenEditor_<version>_*.zip");
-            if (!IsValidZip(content))
+            if (!EditorZip.IsValid(content))
                 return new(false, "file is not a valid zip archive");
 
             var normalizedBranch = string.IsNullOrWhiteSpace(branch) ? null : branch.Trim();
@@ -48,19 +47,6 @@ namespace CustomFumenProviderWebServer.Services.Editor
                 return new(false, $"uploaded version {version} is not newer than the current version");
 
             return new(true);
-        }
-
-        private static bool IsValidZip(byte[] content)
-        {
-            try
-            {
-                using var archive = new ZipArchive(new MemoryStream(content, writable: false), ZipArchiveMode.Read);
-                return true;
-            }
-            catch (InvalidDataException)
-            {
-                return false;
-            }
         }
     }
 }

@@ -4,6 +4,9 @@ namespace CustomFumenProviderWebServer.Models
 {
     public class GithubActionWorkflowRun
     {
+        [JsonPropertyName("id")]
+        public long Id { get; set; }
+
         [JsonPropertyName("created_at")]
         public DateTime CreatedAt { get; set; }
 

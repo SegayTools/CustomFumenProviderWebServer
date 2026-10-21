@@ -1,11 +1,16 @@
 using CustomFumenProviderWebServer.Models;
 using Microsoft.Extensions.Logging;
+using System.Net;
 using System.Net.Http;
 
 namespace CustomFumenProviderWebServer.Services.Editor
 {
     public class EditorServiceUpdater : IHostedService
     {
+        // 仓库里还有部署浏览器的 workflow；取全仓库最新 run 会拿到 browser-site-mt.zip 这类无关产物。
+        private const string EditorWorkflow = "BuildProgram.yml";
+        private const string RepositoryApiUrl = "https://api.github.com/repos/NyagekiFumenProject/OngekiFumenEditor";
+
         private readonly HttpClient httpClient;
         private readonly ILogger<EditorService> logger;
         private readonly IEditorService editorService;
@@ -27,10 +32,20 @@ namespace CustomFumenProviderWebServer.Services.Editor
         {
             try
             {
-                await Task.WhenAll([
-                    UpdateEditorResource(false),
-                    UpdateEditorResource(true)
-                ]);
+                var latestRun = await GetLatestSuccessfulRun(false);
+                var masterRun = await GetLatestSuccessfulRun(true);
+
+                if (latestRun is not null && masterRun is not null && latestRun.Id == masterRun.Id)
+                {
+                    // 两个通道指向同一次构建，只下载一次。
+                    await PublishRun(latestRun, requireMasterBranch: true);
+                    return;
+                }
+
+                if (latestRun is not null)
+                    await PublishRun(latestRun, requireMasterBranch: false);
+                if (masterRun is not null)
+                    await PublishRun(masterRun, requireMasterBranch: true);
             }
             catch (Exception e)
             {
@@ -38,65 +53,91 @@ namespace CustomFumenProviderWebServer.Services.Editor
             }
         }
 
-        private async Task UpdateEditorResource(bool requireMasterBranch)
+        private async Task<GithubActionWorkflowRun> GetLatestSuccessfulRun(bool requireMasterBranch)
         {
             try
             {
-                var currentResource = editorService.GetEditorResource(requireMasterBranch);
-
-                var url = @"https://api.github.com/repos/NyagekiFumenProject/OngekiFumenEditor/actions/runs?status=success&per_page=1";
+                var url = $"{RepositoryApiUrl}/actions/workflows/{EditorWorkflow}/runs?status=success&per_page=1";
                 if (requireMasterBranch)
                     url += "&branch=master";
 
-                var req = new HttpRequestMessage(HttpMethod.Get, url);
-                var resp = await httpClient.SendAsync(req);
+                using var resp = await httpClient.GetAsync(url);
+                resp.EnsureSuccessStatusCode();
 
                 var runsResp = await resp.Content.ReadFromJsonAsync<GithubActionListAction>();
-                if (runsResp?.WorkflowRuns.FirstOrDefault() is GithubActionWorkflowRun workflowRun)
-                {
-                    if (workflowRun.CreatedAt > currentResource.LocalCreateAt)
-                    {
-                        //get artifact
-                        req = new HttpRequestMessage(HttpMethod.Get, workflowRun.ArtifactsUrl);
-                        resp = await httpClient.SendAsync(req);
+                var run = runsResp?.WorkflowRuns?.FirstOrDefault();
+                if (run is null)
+                    return null;
 
-                        var artifactsResp = await resp.Content.ReadFromJsonAsync<GithubActionListArtifacts>();
-                        if (artifactsResp?.Artifacts.FirstOrDefault() is GithubActionArtifact artifact)
-                        {
-                            //download zip
-                            req = new HttpRequestMessage(HttpMethod.Get, artifact.ArchiveDownloadUrl);
-                            resp = await httpClient.SendAsync(req);
-
-                            var content = await resp.Content.ReadAsByteArrayAsync();
-
-                            var resource = new EditorResource
-                            {
-                                LocalFileName = artifact.Name + ".zip",
-                                ZipContent = content,
-                                LocalCreateAt = workflowRun.CreatedAt,
-                                VersionInfo = new VersionInfo
-                                {
-                                    Time = workflowRun.CreatedAt,
-                                    Branch = workflowRun.HeadBranch,
-                                    FileSize = content.Length,
-                                },
-                            };
-
-                            if (EditorArtifactName.TryParse(artifact.Name, out var version))
-                                resource.VersionInfo.Version = version;
-
-                            if (editorService.UpdateEditorResource(requireMasterBranch, resource))
-                                logger.LogInformation($"fetch editor new version, requireMasterBranch:{requireMasterBranch}, version:{resource.VersionInfo.Version}, date:{resource.LocalFileName}, branch:{resource.VersionInfo.Branch}");
-                            else
-                                logger.LogInformation($"ignore editor artifact with non-newer version, requireMasterBranch:{requireMasterBranch}, version:{resource.VersionInfo.Version}, date:{resource.LocalFileName}");
-                            return;
-                        }
-                    }
-                }
+                var currentResource = editorService.GetEditorResource(requireMasterBranch);
+                return run.CreatedAt > currentResource.LocalCreateAt ? run : null;
             }
             catch (Exception e)
             {
-                logger.LogError($"Can't fetch latest editor zip from github action, requireMasterBranch:{requireMasterBranch}, exceptionMessage: {e.Message}");
+                logger.LogError(e, "Can't fetch latest editor workflow run, requireMasterBranch:{RequireMasterBranch}", requireMasterBranch);
+                return null;
+            }
+        }
+
+        private async Task PublishRun(GithubActionWorkflowRun run, bool requireMasterBranch)
+        {
+            try
+            {
+                using var artifactsResp = await httpClient.GetAsync(run.ArtifactsUrl);
+                artifactsResp.EnsureSuccessStatusCode();
+
+                var artifacts = await artifactsResp.Content.ReadFromJsonAsync<GithubActionListArtifacts>();
+                if (!EditorArtifactSelector.TrySelect(artifacts?.Artifacts, out var artifact, out var version))
+                {
+                    logger.LogWarning("no usable editor artifact in workflow run, requireMasterBranch:{RequireMasterBranch}, run:{RunId}, date:{Date}",
+                        requireMasterBranch, run.Id, run.CreatedAt);
+                    return;
+                }
+
+                using var downloadResp = await httpClient.GetAsync(artifact.ArchiveDownloadUrl);
+                if (downloadResp.StatusCode == HttpStatusCode.Unauthorized)
+                {
+                    // GitHub 的 artifact 下载端点即使对公开仓库也要求认证。
+                    logger.LogError("GitHub rejected the editor artifact download (401); set EDITOR_UPDATE_GITHUB_TOKEN with actions:read permission, requireMasterBranch:{RequireMasterBranch}",
+                        requireMasterBranch);
+                    return;
+                }
+
+                downloadResp.EnsureSuccessStatusCode();
+
+                var content = await downloadResp.Content.ReadAsByteArrayAsync();
+                if (!EditorZip.IsValid(content))
+                {
+                    logger.LogError("downloaded editor artifact is not a valid zip, requireMasterBranch:{RequireMasterBranch}, artifact:{Artifact}",
+                        requireMasterBranch, artifact.Name);
+                    return;
+                }
+
+                var branch = string.IsNullOrWhiteSpace(run.HeadBranch) ? "unknown" : run.HeadBranch.Replace('/', '_');
+                var resource = new EditorResource
+                {
+                    LocalFileName = $"OngekiFumenEditor_{version}_{branch}.zip",
+                    ZipContent = content,
+                    LocalCreateAt = run.CreatedAt,
+                    VersionInfo = new VersionInfo
+                    {
+                        Time = run.CreatedAt,
+                        Branch = run.HeadBranch,
+                        Version = version,
+                        FileSize = content.Length,
+                    },
+                };
+
+                if (editorService.UpdateEditorResource(requireMasterBranch, resource))
+                    logger.LogInformation("fetch editor new version, requireMasterBranch:{RequireMasterBranch}, version:{Version}, file:{FileName}, branch:{Branch}",
+                        requireMasterBranch, version, resource.LocalFileName, run.HeadBranch);
+                else
+                    logger.LogInformation("ignore editor artifact with non-newer version, requireMasterBranch:{RequireMasterBranch}, version:{Version}, file:{FileName}, branch:{Branch}",
+                        requireMasterBranch, version, resource.LocalFileName, run.HeadBranch);
+            }
+            catch (Exception e)
+            {
+                logger.LogError(e, "Can't fetch latest editor zip from github action, requireMasterBranch:{RequireMasterBranch}", requireMasterBranch);
             }
         }
 

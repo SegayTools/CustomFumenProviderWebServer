@@ -9,5 +9,8 @@ namespace CustomFumenProviderWebServer.Models
 
         [JsonPropertyName("archive_download_url")]
         public string ArchiveDownloadUrl { get; set; }
+
+        [JsonPropertyName("expired")]
+        public bool Expired { get; set; }
     }
 }
