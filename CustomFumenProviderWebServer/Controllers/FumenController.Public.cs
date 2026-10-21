@@ -832,11 +832,7 @@ namespace CustomFumenProviderWebServer.Controllers
 
         async Task DownloadFormFile(string saveFilePath, IFormFile file)
         {
-            if (file is null)
-                return;
-            var formStream = file.OpenReadStream();
-            using var fs = System.IO.File.OpenWrite(saveFilePath);
-            await formStream.CopyToAsync(fs);
+            await FormFileUtils.SaveAsync(file, saveFilePath);
         }
 
         /// <summary>
