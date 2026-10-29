@@ -17,6 +17,7 @@ namespace CustomFumenProviderWebServer.Services
         {
             WriteIndented = true,
             Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping,
+            PropertyNameCaseInsensitive = true,
         };
 
         private readonly string fumenFolderPath;
@@ -117,13 +118,43 @@ namespace CustomFumenProviderWebServer.Services
             }
         }
 
+        public string GetInfoJsonPath(int musicId)
+        {
+            return Path.Combine(GetStoragePath(musicId), "info.json");
+        }
+
+        /// <summary>
+        /// 读取 info.json。谱面元数据/定数的唯一入口，缺失或损坏时返回失败。
+        /// </summary>
+        public async Task<Result<FumenSet>> ReadInfoJsonAsync(int musicId)
+        {
+            var jsonFile = GetInfoJsonPath(musicId);
+            if (!File.Exists(jsonFile))
+                return new(false, $"info.json not found: {jsonFile}");
+
+            try
+            {
+                await using var fs = File.OpenRead(jsonFile);
+                var set = await JsonSerializer.DeserializeAsync<FumenSet>(fs, jsonSerializerOptions);
+                if (set is null)
+                    return new(false, $"info.json is empty: {jsonFile}");
+
+                FumenSetNormalizer.ApplyMusicId(set, musicId);
+                return new(true, string.Empty, set);
+            }
+            catch (Exception e)
+            {
+                return new(false, $"read info.json failed: {e.Message}");
+            }
+        }
+
         /// <summary>
         /// 原子写入 info.json。内容变短时不会残留旧数据的尾部。
         /// </summary>
         public async Task<Result> WriteInfoJsonAsync(FumenSet set)
         {
             var storagePath = GetStoragePath(set.MusicId);
-            var jsonFile = Path.Combine(storagePath, "info.json");
+            var jsonFile = GetInfoJsonPath(set.MusicId);
 
             try
             {

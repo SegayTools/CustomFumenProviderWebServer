@@ -303,6 +303,17 @@ namespace CustomFumenProviderWebServer.Controllers
             var musicIdStr = set.MusicId.ToString().PadLeft(4, '0');
             traceLog($"realloc musicId done, new musicId:{set.MusicId}");
 
+            var owner = new FumenOwner()
+            {
+                MusicId = newMusicId,
+                Contact = contract,
+                PasswordHash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(password)))
+            };
+            set.PublishState = PublishState.NotReadyForPending;
+            set.UpdateTime = DateTime.Now;
+            //Owner 不参与 info.json 序列化(JsonIgnore),但后续 DB 写入需要
+            set.Owner = owner;
+
             //step2: generate Jacket
             try
             {
@@ -431,12 +442,30 @@ namespace CustomFumenProviderWebServer.Controllers
             }
             traceLog("copy fumen files done");
 
-            //step5: generate Music.xml
+            //step4.5: info.json 是唯一中间来源,先落盘再读取,Music.xml 必须由它渲染
+            FumenSet persistedSet;
+            try
+            {
+                var infoJsonFilePath = Path.Combine(generatedTempFolder, "info.json");
+                using (var fs = System.IO.File.OpenWrite(infoJsonFilePath))
+                    await JsonSerializer.SerializeAsync(fs, set, jsonSerializerOptions);
 
+                using (var fs = System.IO.File.OpenRead(infoJsonFilePath))
+                    persistedSet = await JsonSerializer.DeserializeAsync<FumenSet>(fs, jsonSerializerOptions)
+                        ?? throw new InvalidDataException("info.json is empty");
+                persistedSet.Owner = owner;
+            }
+            catch (Exception e)
+            {
+                return check(new DeliverResultResponse(false, $"generate info.json throw exception:{e.Message}"));
+            }
+            traceLog("generate info.json done");
+
+            //step5: generate Music.xml from info.json
             try
             {
                 var outputXmlFilePath = Path.Combine(fumenFolder, "Music.xml");
-                await musicXmlService.GenerateMusicXml(set, outputXmlFilePath);
+                await musicXmlService.GenerateMusicXml(persistedSet, outputXmlFilePath);
             }
             catch (Exception e)
             {
@@ -455,14 +484,6 @@ namespace CustomFumenProviderWebServer.Controllers
             });
             traceLog($"pack zip done");
 
-            //step8: generate info.json
-            {
-                var infoJsonFilePath = Path.Combine(generatedTempFolder, $"info.json");
-                using var fs = System.IO.File.OpenWrite(infoJsonFilePath);
-                await JsonSerializer.SerializeAsync(fs, set, jsonSerializerOptions);
-            }
-            traceLog($"generate info.json done");
-
             //step8: move .png file
             {
                 var outputJacketFilePath = Path.Combine(generatedTempFolder, $"jacket.png");
@@ -473,15 +494,6 @@ namespace CustomFumenProviderWebServer.Controllers
             //step9: register in database
             using var _ = await fumenOperationLock.AcquireAsync(newMusicId);
 
-            set.PublishState = PublishState.NotReadyForPending;
-            set.UpdateTime = DateTime.Now;
-            set.Owner = new FumenOwner()
-            {
-                MusicId = newMusicId,
-                Contact = contract,
-                PasswordHash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(password)))
-            };
-
             using var trans = await db.Database.BeginTransactionAsync();
             traceLog($"begin transaction");
 
@@ -489,7 +501,7 @@ namespace CustomFumenProviderWebServer.Controllers
             {
 
                 var isUpdate = false;
-                if ((await db.FumenSets.FindAsync(set.MusicId)) is FumenSet cSet)
+                if ((await db.FumenSets.FindAsync(persistedSet.MusicId)) is FumenSet cSet)
                 {
                     traceLog($"find old fumenSet, remove");
                     isUpdate = true;
@@ -497,7 +509,7 @@ namespace CustomFumenProviderWebServer.Controllers
                     await db.SaveChangesAsync();
                 }
 
-                db.Add(set);
+                db.Add(persistedSet);
                 await db.SaveChangesAsync();
                 traceLog($"added new fumenSet");
 
@@ -515,7 +527,7 @@ namespace CustomFumenProviderWebServer.Controllers
                 traceLog($"fumen folder is copied");
 
                 await trans.CommitAsync();
-                return check(new(true, "register successfully, waiting for pending", set));
+                return check(new(true, "register successfully, waiting for pending", persistedSet));
             }
             catch (Exception e)
             {
@@ -556,31 +568,104 @@ namespace CustomFumenProviderWebServer.Controllers
             }
         }
 
-        async ValueTask<Result> UpdateSetInfo(int musicId, Func<FumenSet, Task<bool>> additionalUpdateFunc = default)
+        /// <summary>
+        /// 读取 info.json；旧目录没有 info.json 时从 opt/Music.xml 迁移一次并落盘。
+        /// </summary>
+        async ValueTask<Result<FumenSet>> ReadOrImportInfoSetAsync(int musicId)
         {
-            var musicIdStr = musicId.ToString().PadLeft(4, '0');
-            var tempFolder = TempPathUtils.GetNewTempFolder();
+            var readResult = await fumenStorageService.ReadInfoJsonAsync(musicId);
+            if (readResult.IsSuccess)
+                return readResult;
 
-            var storagePath = Path.Combine(fumenFolderPath, $"fumen{musicIdStr}");
-            var optPath = Path.Combine(storagePath, "opt");
+            var ensureResult = fumenStorageService.EnsureOptFolder(musicId);
+            if (!ensureResult.IsSuccess)
+                return new(false, $"info.json not found and opt folder unavailable: {ensureResult.Message}");
+
+            var musicIdStr = musicId.ToString().PadLeft(4, '0');
+            var musicFolder = fumenStorageService.GetOptMusicFolder(musicId);
+            var xmlFile = Path.Combine(musicFolder, "Music.xml");
+            if (!System.IO.File.Exists(xmlFile))
+                return new(false, readResult.Message);
+
+            var parseResult = await musicXmlService.GenerateFumenSet(
+                xmlFile,
+                Path.Combine(musicFolder, $"{musicIdStr}_00.ogkr"),
+                Path.Combine(musicFolder, $"{musicIdStr}_01.ogkr"),
+                Path.Combine(musicFolder, $"{musicIdStr}_02.ogkr"),
+                Path.Combine(musicFolder, $"{musicIdStr}_03.ogkr"),
+                Path.Combine(musicFolder, $"{musicIdStr}_04.ogkr"));
+            if (!parseResult.IsSuccess)
+                return new(false, parseResult.Message);
+
+            var set = parseResult.Data;
+            FumenSetNormalizer.ApplyMusicId(set, musicId);
+            set.UpdateTime = DateTime.Now;
+
+            var writeResult = await fumenStorageService.WriteInfoJsonAsync(set);
+            if (!writeResult.IsSuccess)
+                return new(false, writeResult.Message);
+
+            return new(true, string.Empty, set);
+        }
+
+        /// <summary>
+        /// 只从 info.json 重新生成 opt/.../Music.xml。
+        /// </summary>
+        async ValueTask<Result> GenerateMusicXmlFromInfoAsync(int musicId)
+        {
+            var infoResult = await fumenStorageService.ReadInfoJsonAsync(musicId);
+            if (!infoResult.IsSuccess)
+                return new(false, infoResult.Message);
+
+            var tempFolder = TempPathUtils.GetNewTempFolder();
+            try
+            {
+                var tempXmlFile = Path.Combine(tempFolder, "Music.xml");
+                var generateResult = await musicXmlService.GenerateMusicXml(infoResult.Data, tempXmlFile);
+                if (!generateResult.IsSuccess)
+                    return generateResult;
+
+                var musicFolder = fumenStorageService.GetOptMusicFolder(musicId);
+                Directory.CreateDirectory(musicFolder);
+                System.IO.File.Move(tempXmlFile, Path.Combine(musicFolder, "Music.xml"), true);
+                return new(true);
+            }
+            catch (Exception e)
+            {
+                return new(false, $"generate Music.xml from info.json failed: {e.Message}");
+            }
+            finally
+            {
+                Directory.Delete(tempFolder, true);
+            }
+        }
+
+        /// <summary>
+        /// 以 info.json 为元数据/定数的唯一来源同步数据库，并按需从 info.json 重渲染 Music.xml。
+        /// 旧目录没有 info.json 时会从 Music.xml 迁移一次；常规更新不再解析 Music.xml。
+        /// </summary>
+        async ValueTask<Result> UpdateSetInfo(
+            int musicId,
+            bool regenerateMusicXml = false,
+            Func<FumenSet, Task<Result>> mutate = default)
+        {
+            var infoResult = await ReadOrImportInfoSetAsync(musicId);
+            if (!infoResult.IsSuccess)
+                return new(false, infoResult.Message);
+
+            var set = infoResult.Data;
+            if (mutate is not null)
+            {
+                var mutateResult = await mutate(set);
+                if (!mutateResult.IsSuccess)
+                    return mutateResult;
+            }
 
             using var db = await fumenDataDBFactory.CreateDbContextAsync();
             using var trans = await db.Database.BeginTransactionAsync();
 
             try
             {
-                var xmlFile = Path.Combine(optPath, "music", $"music{musicIdStr}", "Music.xml");
-                var bscFile = Path.Combine(optPath, "music", $"music{musicIdStr}", $"{musicIdStr}_00.ogkr");
-                var advFile = Path.Combine(optPath, "music", $"music{musicIdStr}", $"{musicIdStr}_01.ogkr");
-                var expFile = Path.Combine(optPath, "music", $"music{musicIdStr}", $"{musicIdStr}_02.ogkr");
-                var mstFile = Path.Combine(optPath, "music", $"music{musicIdStr}", $"{musicIdStr}_03.ogkr");
-                var lucFile = Path.Combine(optPath, "music", $"music{musicIdStr}", $"{musicIdStr}_04.ogkr");
-
-                var result = await musicXmlService.GenerateFumenSet(xmlFile, bscFile, advFile, expFile, mstFile, lucFile);
-                if (!result.IsSuccess)
-                    return new(false, result.Message);
-                var set = result.Data;
-
                 var publicState = PublishState.NotReadyForPending;
                 FumenOwner owner = null;
                 if ((await db.FumenSets.FindAsync(musicId)) is FumenSet cSet)
@@ -597,30 +682,34 @@ namespace CustomFumenProviderWebServer.Controllers
                 set.Owner = owner;
                 set.UpdateTime = DateTime.Now;
 
-                var needUpdateMusicXml = additionalUpdateFunc != null && (await additionalUpdateFunc.Invoke(set));
+                var writeInfoResult = await fumenStorageService.WriteInfoJsonAsync(set);
+                if (!writeInfoResult.IsSuccess)
+                {
+                    await trans.RollbackAsync();
+                    return writeInfoResult;
+                }
 
-                db.Add(set);
+                //数据库也从刚落盘的 info.json 装配,确保磁盘与数据库是同一份数据
+                var persistedResult = await fumenStorageService.ReadInfoJsonAsync(musicId);
+                if (!persistedResult.IsSuccess)
+                {
+                    await trans.RollbackAsync();
+                    return new(false, persistedResult.Message);
+                }
+
+                var persisted = persistedResult.Data;
+                persisted.Owner = owner;
+                db.Add(persisted);
                 await db.SaveChangesAsync();
-
-                var tempJsonFile = Path.Combine(tempFolder, $"info.json");
-                var jsonFile = Path.Combine(storagePath, $"info.json");
-                {
-                    using var fs = System.IO.File.OpenWrite(tempJsonFile);
-                    await JsonSerializer.SerializeAsync(fs, set, jsonSerializerOptions);
-                }
-
-                System.IO.File.Move(tempJsonFile, jsonFile, true);
-
-                //update music.xml if need
-                if (needUpdateMusicXml)
-                {
-                    logger.LogInformation($"fumen set had been changed,now re-generate {xmlFile}");
-                    var tempXmlFilePath = Path.Combine(tempFolder, "Music.xml");
-                    await musicXmlService.GenerateMusicXml(set, tempXmlFilePath);
-                    System.IO.File.Copy(tempXmlFilePath, xmlFile, true);
-                }
-
                 await trans.CommitAsync();
+
+                if (regenerateMusicXml)
+                {
+                    var xmlResult = await GenerateMusicXmlFromInfoAsync(musicId);
+                    if (!xmlResult.IsSuccess)
+                        return xmlResult;
+                }
+
                 return new(true);
             }
             catch (Exception e)
@@ -628,19 +717,16 @@ namespace CustomFumenProviderWebServer.Controllers
                 await trans.RollbackAsync();
                 return new(false, $"Update FumenSet throw exception:{e.Message}");
             }
-            finally
-            {
-                Directory.Delete(tempFolder, true);
-            }
         }
 
         async ValueTask<Result> ProcessMusicXmlToFile(string inputXmlFile, int musicId)
         {
-            var musicIdStr = musicId.ToString().PadLeft(4, '0');
-            var tempFolder = TempPathUtils.GetNewTempFolder();
+            var ensureResult = fumenStorageService.EnsureOptFolder(musicId);
+            if (!ensureResult.IsSuccess)
+                return ensureResult;
 
-            var storagePath = Path.Combine(fumenFolderPath, $"fumen{musicIdStr}");
-            var fumenFolder = Path.Combine(storagePath, "opt", "music", $"music{musicIdStr}");
+            var musicIdStr = musicId.ToString().PadLeft(4, '0');
+            var fumenFolder = fumenStorageService.GetOptMusicFolder(musicId);
 
             try
             {
@@ -658,13 +744,12 @@ namespace CustomFumenProviderWebServer.Controllers
                 FumenSetNormalizer.ApplyMusicId(set, musicId);
                 set.UpdateTime = DateTime.Now;
 
-                var tempXmlFilePath = Path.Combine(tempFolder, "Music.xml");
-                var xmlFilePath = Path.Combine(fumenFolder, "Music.xml");
+                //上传的 Music.xml 只用于更新 info.json；随后统一从 info.json 渲染 Music.xml
+                var writeResult = await fumenStorageService.WriteInfoJsonAsync(set);
+                if (!writeResult.IsSuccess)
+                    return writeResult;
 
-                await musicXmlService.GenerateMusicXml(set, tempXmlFilePath);
-                System.IO.File.Copy(tempXmlFilePath, xmlFilePath, true);
-
-                var updateResult = await UpdateSetInfo(musicId);
+                var updateResult = await UpdateSetInfo(musicId, regenerateMusicXml: true);
                 if (!updateResult.IsSuccess)
                     return updateResult;
 
@@ -674,10 +759,6 @@ namespace CustomFumenProviderWebServer.Controllers
             catch (Exception e)
             {
                 return new(false, $"Copy fumen files throw exception:{e.Message}");
-            }
-            finally
-            {
-                Directory.Delete(tempFolder, true);
             }
         }
 
@@ -765,7 +846,7 @@ namespace CustomFumenProviderWebServer.Controllers
 
         async ValueTask<Result> ProcessFumenToFile(string ogkrFile, int musicId, int diffIdx, float? changeDiff)
         {
-            async Task<bool> UpdateDiff(FumenSet set)
+            async Task<Result> UpdateDiff(FumenSet set)
             {
                 var diff = set.FumenDifficults.FirstOrDefault(d => d.DifficultIndex == diffIdx);
                 if (diff is null)
@@ -779,13 +860,9 @@ namespace CustomFumenProviderWebServer.Controllers
 
                 if (changeDiff is { } newDiff)
                     diff.Level = newDiff;
-                /*
-                var result = await musicXmlService.ParseFumenFileInfo(diff, ogkrFile);
-                if (!result.IsSuccess)
-                    return false;
 
-                */
-                return true;
+                //谱面内容变更后,BPM/Creator/物量统计也要写回 info.json
+                return await musicXmlService.ParseFumenFileInfo(diff, ogkrFile);
             }
 
             //先按请求定数(或库里现有定数)生成副本,UpdateSetInfo 之后再按最终定数校正一次
@@ -799,7 +876,7 @@ namespace CustomFumenProviderWebServer.Controllers
             if (!saveResult.IsSuccess)
                 return saveResult;
 
-            var updateResult = await UpdateSetInfo(musicId, UpdateDiff);
+            var updateResult = await UpdateSetInfo(musicId, regenerateMusicXml: true, mutate: UpdateDiff);
             if (!updateResult.IsSuccess)
                 return updateResult;
 
@@ -1128,7 +1205,7 @@ namespace CustomFumenProviderWebServer.Controllers
             if (!ensureResult.IsSuccess)
                 return HttpStatus(ensureResult);
 
-            var result = await UpdateSetInfo(musicId, existingSet => Task.FromResult(reGenerateMusicXml));
+            var result = await UpdateSetInfo(musicId, regenerateMusicXml: reGenerateMusicXml);
             if (!result.IsSuccess)
                 return HttpStatus(result);
 
@@ -1209,7 +1286,7 @@ namespace CustomFumenProviderWebServer.Controllers
 
             if (repackZip)
             {
-                result = await UpdateSetInfo(musicId);
+                result = await UpdateSetInfo(musicId, regenerateMusicXml: true);
                 if (!result.IsSuccess)
                     return HttpStatus(result);
 
