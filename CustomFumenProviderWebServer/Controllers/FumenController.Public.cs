@@ -34,6 +34,8 @@ namespace CustomFumenProviderWebServer.Controllers
         private readonly AdminAuthService adminAuthService;
         private readonly FumenStateService fumenStateService;
         private readonly FumenStorageService fumenStorageService;
+        private readonly FumenChartService fumenChartService;
+        private readonly FumenXmlService fumenXmlService;
         private readonly FumenRemovalService fumenRemovalService;
         private readonly IFileCacheListService fileCacheListService;
         private readonly string fumenFolderPath;
@@ -81,7 +83,7 @@ namespace CustomFumenProviderWebServer.Controllers
             return result;
         }
 
-        public FumenController(ILogger<FumenController> logger, IDbContextFactory<FumenDataDB> fumenDataDBFactory, AudioService audioService, JacketService jacketService, MusicXmlService musicXmlService, FumenOperationLock fumenOperationLock, AdminAuthService adminAuthService, FumenStateService fumenStateService, FumenStorageService fumenStorageService, FumenRemovalService fumenRemovalService, IFileCacheListService fileCacheListService)
+        public FumenController(ILogger<FumenController> logger, IDbContextFactory<FumenDataDB> fumenDataDBFactory, AudioService audioService, JacketService jacketService, MusicXmlService musicXmlService, FumenOperationLock fumenOperationLock, AdminAuthService adminAuthService, FumenStateService fumenStateService, FumenStorageService fumenStorageService, FumenChartService fumenChartService, FumenXmlService fumenXmlService, FumenRemovalService fumenRemovalService, IFileCacheListService fileCacheListService)
         {
             this.logger = logger;
             this.fumenDataDBFactory = fumenDataDBFactory;
@@ -92,6 +94,8 @@ namespace CustomFumenProviderWebServer.Controllers
             this.adminAuthService = adminAuthService;
             this.fumenStateService = fumenStateService;
             this.fumenStorageService = fumenStorageService;
+            this.fumenChartService = fumenChartService;
+            this.fumenXmlService = fumenXmlService;
             this.fumenRemovalService = fumenRemovalService;
             this.fileCacheListService = fileCacheListService;
             this.fumenFolderPath = Environment.GetEnvironmentVariable("FumenDirectory");
@@ -390,38 +394,53 @@ namespace CustomFumenProviderWebServer.Controllers
             traceLog($"generate audio done");
         AUDIO_GENERATOR_SKIP:
 
-            //step4: copy fumen files.
+            //step4: archive raw fumen files and generate processed opt copies.
             var fumenFolder = Path.Combine(optTempFolder, "music", $"music{musicIdStr}");
             Directory.CreateDirectory(fumenFolder);
             try
             {
-                void CopyOgkrFile(string ogkrFile, int diffIdx)
+                var ogkrFilePaths = new[]
                 {
+                    bscOgkrFilePath,
+                    advOgkrFilePath,
+                    expOgkrFilePath,
+                    mstOgkrFilePath,
+                    lucOgkrFilePath,
+                };
+                var uploads = new List<FumenChartUpload>();
+
+                for (int diffIdx = 0; diffIdx < ogkrFilePaths.Length; diffIdx++)
+                {
+                    var ogkrFile = ogkrFilePaths[diffIdx];
                     if (!System.IO.File.Exists(ogkrFile))
-                        return;
+                        continue;
 
-                    var fileName = $"{musicIdStr}_0{diffIdx}.ogkr";
-                    var outputFumenFile = Path.Combine(fumenFolder, fileName);
+                    var diff = set.FumenDifficults.FirstOrDefault(d => d.DifficultIndex == diffIdx);
+                    if (diff is null)
+                        return check(new(false, $"fumen data for difficulty {diffIdx} is missing in Music.xml"));
 
-                    System.IO.File.Copy(ogkrFile, outputFumenFile, true);
+                    uploads.Add(new FumenChartUpload(diffIdx, ogkrFile, diff.Level));
                 }
 
-                CopyOgkrFile(bscOgkrFilePath, 0);
-                CopyOgkrFile(advOgkrFilePath, 1);
-                CopyOgkrFile(expOgkrFilePath, 2);
-                CopyOgkrFile(mstOgkrFilePath, 3);
-                CopyOgkrFile(lucOgkrFilePath, 4);
+                //原始谱面原样归档到 fumen{musicId}/{难度}.ogkr,游戏副本改写 CREATOR
+                var saveResult = await fumenChartService.SaveDeliverChartsAsync(set.MusicId, generatedTempFolder, fumenFolder, uploads);
+                if (!saveResult.IsSuccess)
+                    return check(new(false, saveResult.Message));
             }
             catch (Exception e)
             {
                 return check(new DeliverResultResponse(false, $"Copy fumen files throw exception:{e.Message}"));
             }
-            traceLog($"copy fumen files done");
+            traceLog("copy fumen files done");
 
-            //step5: generate Music.xml
-
+            //step5: archive provided Music.xml and generate processed Music.xml
             try
             {
+                //用户提供的 Music.xml 原样归档到 fumen{musicId}/music.xml
+                var archiveXmlResult = await fumenXmlService.ArchiveProvidedXmlAsync(generatedTempFolder, xmlFilePath);
+                if (!archiveXmlResult.IsSuccess)
+                    return check(new(false, archiveXmlResult.Message));
+
                 var outputXmlFilePath = Path.Combine(fumenFolder, "Music.xml");
                 await musicXmlService.GenerateMusicXml(set, outputXmlFilePath);
             }
@@ -631,6 +650,11 @@ namespace CustomFumenProviderWebServer.Controllers
 
             try
             {
+                //用户提供的 Music.xml 原样归档到 fumen{musicId}/music.xml
+                var archiveXmlResult = await fumenXmlService.ArchiveProvidedXmlAsync(musicId, inputXmlFile);
+                if (!archiveXmlResult.IsSuccess)
+                    return archiveXmlResult;
+
                 var bscFile = Path.Combine(fumenFolder, $"{musicIdStr}_00.ogkr");
                 var advFile = Path.Combine(fumenFolder, $"{musicIdStr}_01.ogkr");
                 var expFile = Path.Combine(fumenFolder, $"{musicIdStr}_02.ogkr");
@@ -650,8 +674,13 @@ namespace CustomFumenProviderWebServer.Controllers
 
                 await musicXmlService.GenerateMusicXml(set, tempXmlFilePath);
                 System.IO.File.Copy(tempXmlFilePath, xmlFilePath, true);
-                await UpdateSetInfo(musicId);
-                return new(true);
+
+                var updateResult = await UpdateSetInfo(musicId);
+                if (!updateResult.IsSuccess)
+                    return updateResult;
+
+                //Music.xml 可能改了定数，opt 副本里的 [自制谱 Lv.x] 需要跟着更新
+                return await RegenerateProcessedCharts(musicId);
             }
             catch (Exception e)
             {
@@ -661,6 +690,29 @@ namespace CustomFumenProviderWebServer.Controllers
             {
                 Directory.Delete(tempFolder, true);
             }
+        }
+
+        /// <summary>
+        /// 按库里的最终定数重写该谱面所有已存在难度的 opt 副本（CREATOR 的 Lv 值）。
+        /// 优先从根目录归档恢复原谱师，旧谱面没有归档时退回现有 opt 文件。
+        /// </summary>
+        async ValueTask<Result> RegenerateProcessedCharts(int musicId)
+        {
+            using var db = await fumenDataDBFactory.CreateDbContextAsync();
+            var set = await db.FumenSets
+                .Include(x => x.FumenDifficults)
+                .FirstOrDefaultAsync(x => x.MusicId == musicId);
+            if (set is null)
+                return new(false, $"FumenSet not found: {musicId}");
+
+            foreach (var diff in set.FumenDifficults)
+            {
+                var result = await fumenChartService.RegenerateOptChartAsync(musicId, diff.DifficultIndex, diff.Level);
+                if (!result.IsSuccess)
+                    return result;
+            }
+
+            return new(true);
         }
 
         async ValueTask<Result> ProcessJacketToFile(string inputFile, int musicId)
@@ -724,11 +776,6 @@ namespace CustomFumenProviderWebServer.Controllers
 
         async ValueTask<Result> ProcessFumenToFile(string ogkrFile, int musicId, int diffIdx, float? changeDiff)
         {
-            var musicIdStr = musicId.ToString().PadLeft(4, '0');
-            var diffIdxStr = diffIdx.ToString().PadLeft(2, '0');
-
-            var fumenFile = Path.Combine(fumenFolderPath, $"fumen{musicIdStr}", "opt", "music", $"music{musicIdStr}", $"{musicIdStr}_{diffIdxStr}.ogkr");
-
             async Task<bool> UpdateDiff(FumenSet set)
             {
                 var diff = set.FumenDifficults.FirstOrDefault(d => d.DifficultIndex == diffIdx);
@@ -752,15 +799,37 @@ namespace CustomFumenProviderWebServer.Controllers
                 return true;
             }
 
-            try
+            //先按请求定数(或库里现有定数)生成副本,UpdateSetInfo 之后再按最终定数校正一次
+            var initialLevel = changeDiff ?? await GetDifficultyLevel(musicId, diffIdx);
+
+            var saveResult = await fumenChartService.SaveChartAsync(
+                ogkrFile,
+                fumenStorageService.GetArchivePath(musicId, diffIdx),
+                fumenStorageService.GetOptFumenPath(musicId, diffIdx),
+                initialLevel);
+            if (!saveResult.IsSuccess)
+                return saveResult;
+
+            var updateResult = await UpdateSetInfo(musicId, UpdateDiff);
+            if (!updateResult.IsSuccess)
+                return updateResult;
+
+            var finalLevel = changeDiff ?? await GetDifficultyLevel(musicId, diffIdx);
+            if (FumenChartService.FormatLevel(finalLevel) != FumenChartService.FormatLevel(initialLevel))
             {
-                System.IO.File.Copy(ogkrFile, fumenFile, true);
-                return await UpdateSetInfo(musicId, UpdateDiff);
+                var regenerateResult = await fumenChartService.RegenerateOptChartAsync(musicId, diffIdx, finalLevel);
+                if (!regenerateResult.IsSuccess)
+                    return regenerateResult;
             }
-            catch (Exception e)
-            {
-                return new Result(false, $"Copy ogkr file throw exception:{e.Message}");
-            }
+
+            return new(true);
+        }
+
+        async ValueTask<float> GetDifficultyLevel(int musicId, int diffIdx)
+        {
+            using var db = await fumenDataDBFactory.CreateDbContextAsync();
+            var diff = await db.FumenDifficults.FindAsync(musicId, diffIdx);
+            return diff?.Level ?? 0f;
         }
 
         async ValueTask<Result> ProcessAudioToFile(string inputFile, string originalFileName, int musicId, string title)
@@ -1106,6 +1175,61 @@ namespace CustomFumenProviderWebServer.Controllers
             using var lockScope = await fumenOperationLock.AcquireAsync(musicId);
 
             return await fumenStateService.ReadyForPendingAsync(musicId);
+        }
+
+        /// <summary>
+        /// 管理员直接写入谱面目录内的任意文件(新建/覆盖)，可选择重打包 zip 并更新 info.json。
+        /// </summary>
+        /// <param name="fileFormFile">要写入的文件内容</param>
+        /// <param name="musicId">谱面公开musicId, 比如20993</param>
+        /// <param name="relativePath">相对于 fumen{musicId} 的路径, 比如 opt/music/music20993/20993_04.ogkr</param>
+        /// <param name="password">管理员密码</param>
+        /// <param name="repackZip">写入后是否重打包 zip 并更新 info.json/数据库</param>
+        /// <returns>文件写入结果</returns>
+        [HttpPost]
+        [Route("fumen/update/file")]
+        public async Task<Result> UpdateFile(IFormFile fileFormFile, int musicId, string relativePath, string password, bool repackZip = false)
+        {
+            if (!adminAuthService.VerifyAdminPassword(password))
+            {
+                HttpContext.Response.StatusCode = 403;
+                return new(false, "no permission");
+            }
+
+            if (fileFormFile is null)
+                return HttpStatus(new(false, "file is not upload"));
+
+            if (musicId <= 0)
+                return HttpStatus(new(false, $"musicId must be positive, got {musicId}"));
+
+            using var _ = await fumenOperationLock.AcquireAsync(musicId);
+
+            if (repackZip)
+            {
+                //opt 缺失时先从既有 zip 解包, 避免把只含单个新文件的 opt 打进 zip
+                var ensureResult = fumenStorageService.EnsureOptFolder(musicId);
+                if (!ensureResult.IsSuccess)
+                    return HttpStatus(ensureResult);
+            }
+
+            Result result;
+            await using (var stream = fileFormFile.OpenReadStream())
+                result = await fumenStorageService.WriteRelativeFileAsync(musicId, relativePath, stream);
+            if (!result.IsSuccess)
+                return HttpStatus(result);
+
+            if (repackZip)
+            {
+                result = await UpdateSetInfo(musicId);
+                if (!result.IsSuccess)
+                    return HttpStatus(result);
+
+                result = await UpdateZipFile(musicId);
+                if (!result.IsSuccess)
+                    return HttpStatus(result);
+            }
+
+            return HttpStatus(result);
         }
 
         /// <summary>
