@@ -103,4 +103,125 @@ public class FumenStorageServiceTests
         Assert.Equal("short", doc.RootElement.GetProperty("Title").GetString());
         Assert.Equal(1, doc.RootElement.GetProperty("FumenDifficults").GetArrayLength());
     }
+
+    [Fact]
+    public void Paths_CoverArchiveAndOptFumenLayout()
+    {
+        using var temp = new TempFolderScope();
+        var storage = new FumenStorageService(temp.Path);
+
+        Assert.EndsWith(Path.Combine("fumen25666", "master.ogkr"), storage.GetArchivePath(25666, 3));
+        Assert.EndsWith(
+            Path.Combine("fumen25666", "opt", "music", "music25666", "25666_03.ogkr"),
+            storage.GetOptFumenPath(25666, 3));
+
+        Assert.Equal("basic.ogkr", FumenDifficultNames.GetArchiveFileName(0));
+        Assert.Equal("advanced.ogkr", FumenDifficultNames.GetArchiveFileName(1));
+        Assert.Equal("expert.ogkr", FumenDifficultNames.GetArchiveFileName(2));
+        Assert.Equal("master.ogkr", FumenDifficultNames.GetArchiveFileName(3));
+        Assert.Equal("lunatic.ogkr", FumenDifficultNames.GetArchiveFileName(4));
+    }
+
+    [Fact]
+    public async Task WriteRelativeFileAsync_CreatesMissingParentDirectoriesAndWritesContent()
+    {
+        using var temp = new TempFolderScope();
+        var storage = new FumenStorageService(temp.Path);
+        var expected = new byte[] { 1, 2, 3, 4 };
+
+        var result = await storage.WriteRelativeFileAsync(
+            20993,
+            "opt/music/music20993/20993_04.ogkr",
+            new MemoryStream(expected));
+
+        Assert.True(result.IsSuccess, result.Message);
+        var filePath = Path.Combine(
+            storage.GetStoragePath(20993), "opt", "music", "music20993", "20993_04.ogkr");
+        Assert.True(File.Exists(filePath));
+        Assert.Equal(expected, await File.ReadAllBytesAsync(filePath));
+    }
+
+    [Fact]
+    public async Task WriteRelativeFileAsync_OverwritesShorterContentWithoutTrailingBytes()
+    {
+        using var temp = new TempFolderScope();
+        var storage = new FumenStorageService(temp.Path);
+        const string relativePath = "opt/music/music20993/20993_04.ogkr";
+
+        var longResult = await storage.WriteRelativeFileAsync(
+            20993, relativePath, new MemoryStream(new byte[] { 1, 2, 3, 4, 5, 6 }));
+        Assert.True(longResult.IsSuccess, longResult.Message);
+
+        var shortResult = await storage.WriteRelativeFileAsync(
+            20993, relativePath, new MemoryStream(new byte[] { 9, 8 }));
+        Assert.True(shortResult.IsSuccess, shortResult.Message);
+
+        var filePath = Path.Combine(
+            storage.GetStoragePath(20993), "opt", "music", "music20993", "20993_04.ogkr");
+        Assert.Equal(new byte[] { 9, 8 }, await File.ReadAllBytesAsync(filePath));
+    }
+
+    [Fact]
+    public async Task WriteRelativeFileAsync_SetsLastWriteTimeToNow()
+    {
+        using var temp = new TempFolderScope();
+        var storage = new FumenStorageService(temp.Path);
+        const string relativePath = "opt/music/music20993/20993_04.ogkr";
+
+        var before = DateTime.UtcNow.AddSeconds(-2);
+        var result = await storage.WriteRelativeFileAsync(20993, relativePath, new MemoryStream(new byte[] { 1 }));
+        var after = DateTime.UtcNow.AddSeconds(2);
+
+        Assert.True(result.IsSuccess, result.Message);
+        var filePath = Path.Combine(
+            storage.GetStoragePath(20993), "opt", "music", "music20993", "20993_04.ogkr");
+        Assert.InRange(File.GetLastWriteTimeUtc(filePath), before, after);
+    }
+
+    [Fact]
+    public async Task WriteRelativeFileAsync_RejectsPathTraversal()
+    {
+        using var temp = new TempFolderScope();
+        var storage = new FumenStorageService(temp.Path);
+        var fileName = $"evil-{Guid.NewGuid():N}.txt";
+        var outsidePath = Path.Combine(temp.Path, fileName);
+
+        foreach (var relativePath in new[]
+        {
+            $"../{fileName}",
+            $"opt/../../{fileName}",
+            outsidePath,
+        })
+        {
+            var result = await storage.WriteRelativeFileAsync(20993, relativePath, new MemoryStream(new byte[] { 1 }));
+            Assert.False(result.IsSuccess, relativePath);
+        }
+
+        Assert.False(File.Exists(outsidePath));
+    }
+
+    [Fact]
+    public async Task WriteRelativeFileAsync_RejectsEmptyPathAndDirectoryTarget()
+    {
+        using var temp = new TempFolderScope();
+        var storage = new FumenStorageService(temp.Path);
+
+        Assert.False((await storage.WriteRelativeFileAsync(20993, "", new MemoryStream(new byte[] { 1 }))).IsSuccess);
+        Assert.False((await storage.WriteRelativeFileAsync(20993, "   ", new MemoryStream(new byte[] { 1 }))).IsSuccess);
+
+        Directory.CreateDirectory(Path.Combine(storage.GetStoragePath(20993), "opt", "existing"));
+
+        var result = await storage.WriteRelativeFileAsync(20993, "opt/existing", new MemoryStream(new byte[] { 1 }));
+        Assert.False(result.IsSuccess);
+    }
+
+    [Fact]
+    public async Task WriteRelativeFileAsync_RejectsNonPositiveMusicId()
+    {
+        using var temp = new TempFolderScope();
+        var storage = new FumenStorageService(temp.Path);
+
+        Assert.False((await storage.WriteRelativeFileAsync(0, "a.txt", new MemoryStream(new byte[] { 1 }))).IsSuccess);
+        Assert.False((await storage.WriteRelativeFileAsync(-1, "a.txt", new MemoryStream(new byte[] { 1 }))).IsSuccess);
+    }
 }

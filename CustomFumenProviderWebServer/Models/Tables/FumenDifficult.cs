@@ -33,15 +33,7 @@ namespace CustomFumenProviderWebServer.Models.Tables
 
 
         [JsonInclude]
-        public string DifficultName => DifficultIndex switch
-        {
-            0 => "Basic",
-            1 => "Advanced",
-            2 => "Expert",
-            3 => "Master",
-            4 => "Lunatic",
-            _ => string.Empty
-        };
+        public string DifficultName => Utils.FumenDifficultNames.GetName(DifficultIndex);
 
         [JsonIgnore]
         public virtual FumenSet FumenSet { get; }

@@ -18,7 +18,7 @@ namespace CustomFumenProviderWebServer.Services
     {
         private readonly ILogger<MusicXmlService> logger;
         private static Regex BpmRegex = new Regex(@"BPM_DEF\s*([\d\.]+)");
-        private static Regex CreatorRegex = new Regex(@"CREATOR\s*(.+)");
+        private static Regex CreatorRegex = new Regex(@"^\s*CREATOR(?=[ \t]|$)[ \t]*(.*)$");
 
         public MusicXmlService(ILogger<MusicXmlService> logger)
         {
@@ -271,10 +271,11 @@ namespace CustomFumenProviderWebServer.Services
                         var match = CreatorRegex.Match(line);
                         if (match.Success)
                         {
-                            var creator = match.Groups[1].Value;
+                            //opt 里的谱面可能已被写成 [自制谱 Lv.x] 原谱师，入库时只保留原谱师
+                            var creator = FumenChartService.StripSelfMadePrefix(match.Groups[1].Value);
                             isCreatorSetup = true;
 
-                            diff.Creator = creator;
+                            diff.Creator = creator.Length == 0 ? FumenChartService.DefaultCreator : creator;
                         }
                     }
 

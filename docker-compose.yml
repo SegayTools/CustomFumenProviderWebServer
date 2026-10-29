@@ -37,6 +37,7 @@ services:
       ASPNETCORE_ENVIRONMENT: Production
       DBConnectString: "Server=196.18.0.5;Database=fumen;Uid=root;Pwd=q6523230;"
       FumenDirectory: "/FumenDirectory"
+      EnableCreatorRewrite: "false"
       DBVersion: "11.5.2"
     volumes:
       - "my_fumen_vol:/FumenDirectory"
