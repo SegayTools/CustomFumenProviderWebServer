@@ -126,3 +126,55 @@
 | X-2 | 根目录归档与 opt 副本双写，磁盘占用约增加一份谱面；单文件体积小 |
 | X-3 | 存量谱面无根目录归档（按要求不回填）；后续 `update/xml` 会以现有 opt 文件为源重算 |
 | X-4 | 游戏端 `+` 边界来自 `D:\sddt160` 的硬编码 70；若客户端换版本，需要同步 `LevelPlusBorder` |
+
+## 8. opt / zip / fileCache 同步审计
+
+### 8.1 opt 内容的生成来源
+
+| 来源 | 写入 opt 的内容 |
+|---|---|
+| `deliverFumen` | 临时生成完整树：`Music.xml`、5 个 `{id}_0d.ogkr`、`assets/*`、`musicsource/*`，打包 zip 后整体复制到 `fumen{id}` |
+| `update/jacket` | `opt/assets/{id}.png`、`{id}_s.png`，同时更新根目录 `jacket.png` |
+| `update/audio` | `opt/musicsource/musicsource{id}/*.acb|*.awb|MusicSource.xml` |
+| `update/xml` | `opt/music/music{id}/Music.xml`，并按库内定数重写所有已存在难度的谱面 CREATOR |
+| `update/ogkr` | 根目录 `{难度}.ogkr` 归档 + `opt/music/music{id}/{id}_0d.ogkr` 处理副本 |
+| `update/info` | 可选重生成 `opt/.../Music.xml`；缺失 opt 时先从 zip 解包 |
+| `update/repackZip` | 不写 opt，仅按当前 opt 重打包 |
+| `fumen/update/file` | 管理员指定相对路径，可写 opt 内外任意文件 |
+
+### 8.2 各接口的同步动作
+
+| 接口 | opt 写入 | zip 重打包 | DB / info.json | fileCache |
+|---|---|---|---|---|
+| `deliverFumen` | 全量生成 | 生成时打包（来自临时目录） | 插入 set + 写 info.json | 无直接刷新；watcher 可能命中 |
+| `update/jacket` | 是 | 每次 | `UpdateStateAsync` | 无直接刷新；watcher |
+| `update/audio` | 是 | 每次 | `UpdateStateAsync` | 无直接刷新；watcher |
+| `update/xml` | 是 | 每次 | `UpdateSetInfo` + `UpdateStateAsync` | 无直接刷新；watcher |
+| `update/ogkr` | 是 | 每次 | `UpdateSetInfo` + `UpdateStateAsync` | 无直接刷新；watcher |
+| `update/info` | 可能 | 仅 `IsZipOutdated` | `UpdateSetInfo` | 无直接刷新；watcher |
+| `update/repackZip` | 否 | 每次 | `UpdateStateAsync` | 无直接刷新；1 分钟扫描 |
+| `fumen/update/file` | 任意路径 | 仅 `repackZip=true` | 仅 `repackZip=true` 时 `UpdateSetInfo` | 仅路径位于 `opt/` 下时 watcher |
+| `publishFumen` | 否 | 否 | 状态 + 时间 + info.json | 无直接刷新；1 分钟扫描 |
+| `readyForPending` | 否 | 否 | 状态 + 时间 + info.json | 无直接刷新；1 分钟扫描 |
+| `remove` | 删除整个目录 | — | 删除行 | 立即 `TryRemove` |
+
+### 8.3 结论
+
+1. **专用更新接口（jacket/audio/xml/ogkr/repackZip）成功返回前都会重打包 zip**，zip 是当前 opt 的快照；`update/info` 用 `IsZipOutdated` 条件重打包。
+2. **`fumen/update/file` 是主要例外**：默认 `repackZip=false`，写完 opt 后 zip 仍是旧的；且没有 `FumenUpdateScope`，写后解析失败无法回滚。若路径不在 `opt/` 下，zip 本身不会包含该文件。
+3. **重新投稿存在 opt 残留**：`deliverFumen` 更新同 musicId 时只删除根目录文件，`opt` 通过 `CopyDirectory` 合并，旧难度/旧资源文件可能保留；而 zip 来自新生成的临时树，因此“存储 opt”可能包含 zip 中没有的文件，fileCache 也会枚举到它们。
+4. **fileCache 不是同步通知**：服务端没有推送；客户端轮询 `/fileCache/list`。缓存由 `FileSystemWatcher`（`/fumen{id}/opt/` 文件事件）异步刷新，另有 1 分钟 `ScanChanges` 兜底。
+5. **DB 变更与缓存存在窗口期**：`publishFumen`、`readyForPending`、`update/repackZip`、`update/info` 不直接刷新缓存；纯元数据变化最多等 1 分钟。`deliverFumen` 在事务提交前写文件，watcher 可能读不到未提交的 set；且 `ScanChanges` 会排除/移除 `NotReadyForPending`，新投稿要到状态变化后的下一次扫描才稳定进入缓存。
+6. **崩溃/失败一致性**：`Process*ToFile` 多处使用非原子 `File.Copy`；`FumenUpdateScope` 只覆盖异常回滚，不覆盖进程崩溃/断电。`deliverFumen` 复制存储阶段若中途失败，只回滚数据库事务，已复制的部分文件不会清理。
+7. **缓存范围**：`CacheFumenInfo` 只枚举 `opt/`；zip、`info.json`、`jacket.png`、根目录归档都不在文件清单内，`UpdateTime` 是唯一的元数据信号。
+
+### 8.4 建议（A）
+
+| ID | 建议 |
+|---|---|
+| A-1 | `update/file` 纳入 `FumenUpdateScope`；写入路径位于 `opt/` 下时默认自动重打包（或拒绝 `repackZip=false`） |
+| A-2 | 更新/发布/就绪接口提交后显式调用 `fileCacheListService.UpdateCacheFumenInfo(musicId)`，消除 watcher 与 DB 提交的竞态及 1 分钟窗口 |
+| A-3 | `deliverFumen` 重投时先清空 `opt` 子树（或删除整个 `fumen{id}` 后重建），避免旧文件残留 |
+| A-4 | `update/xml` 清理 DB 中已不存在的难度对应的 opt 谱面，保证 opt 与 `FumenData` 一致 |
+| A-5 | 需要“通知”时增加推送（SSE/SignalR/webhook）或缓存版本号/ETag；当前只能轮询 |
+| A-6 | 把 `Process*ToFile` 的写入改为临时文件 + 原子移动，降低崩溃导致的半写风险 |
