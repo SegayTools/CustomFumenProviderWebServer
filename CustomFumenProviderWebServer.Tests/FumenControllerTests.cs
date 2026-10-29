@@ -1,8 +1,6 @@
 using System.IO.Compression;
 using System.Security.Cryptography;
 using System.Text;
-using System.Xml.Linq;
-using System.Xml.XPath;
 using CustomFumenProviderWebServer.Controllers;
 using CustomFumenProviderWebServer.Models;
 using CustomFumenProviderWebServer.Models.Tables;
@@ -10,7 +8,6 @@ using CustomFumenProviderWebServer.Services;
 using CustomFumenProviderWebServer.Utils;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
-using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging.Abstractions;
 
 namespace CustomFumenProviderWebServer.Tests;
@@ -87,61 +84,6 @@ public class FumenControllerTests
         Assert.NotNull(masterDiff);
         Assert.Equal(13f, masterDiff!.Level);
         Assert.Equal("NewAuthor", masterDiff.Creator);
-    }
-
-    [Fact]
-    public async Task UpdateMusicXml_ArchivesProvidedXml_AndRegeneratesOptMusicXml()
-    {
-        using var temp = new TempFolderScope();
-        using var testDb = new TestDatabase();
-        using var env = UseFumenDirectory(temp.Path);
-        var storage = new FumenStorageService(temp.Path);
-        var musicXmlService = new MusicXmlService(NullLogger<MusicXmlService>.Instance);
-        var controller = await PrepareAsync(testDb, storage, musicXmlService);
-
-        var updatedSet = CreateSeedSet();
-        updatedSet.Title = "Uploaded Title";
-        updatedSet.FumenDifficults.First(d => d.DifficultIndex == 3).Level = 13.7f;
-
-        var uploadPath = Path.Combine(temp.Path, "upload.xml");
-        Assert.True((await musicXmlService.GenerateMusicXml(updatedSet, uploadPath)).IsSuccess);
-        var uploadBytes = await File.ReadAllBytesAsync(uploadPath);
-
-        var formFile = new FormFile(new MemoryStream(uploadBytes), 0, uploadBytes.Length, "xmlFormFile", "Music.xml");
-
-        var result = await controller.UpdateMusicXml(formFile, MusicId, Password);
-
-        Assert.True(result.IsSuccess, result.Message);
-
-        //原始归档:字节与上传一致,且文件名是小写 music.xml
-        var archivePath = storage.GetArchiveXmlPath(MusicId);
-        Assert.EndsWith(Path.Combine($"fumen{MusicId:D4}", "music.xml"), archivePath);
-        Assert.Equal(uploadBytes, await File.ReadAllBytesAsync(archivePath));
-
-        //处理后:opt/Music.xml 由服务端生成,包含新标题与新定数
-        var optXmlPath = storage.GetOptMusicXmlPath(MusicId);
-        var musicXml = XDocument.Load(optXmlPath);
-        var masterData = musicXml.XPathSelectElement("/MusicData/FumenData/FumenData[4]");
-        Assert.NotNull(masterData);
-        Assert.Equal("Uploaded Title", musicXml.XPathSelectElement("/MusicData/Name/str")?.Value);
-        Assert.Equal("13", masterData!.Element("FumenConstIntegerPart")?.Value);
-        Assert.Equal("70", masterData.Element("FumenConstFractionalPart")?.Value);
-        Assert.Equal($"{MusicId:D4}_03.ogkr", masterData.Element("FumenFile")?.Element("path")?.Value);
-
-        await using (var verifyDb = testDb.Factory.CreateDbContext())
-        {
-            var set = await verifyDb.FumenSets
-                .Include(x => x.FumenDifficults)
-                .SingleAsync(x => x.MusicId == MusicId);
-            Assert.Equal("Uploaded Title", set.Title);
-            Assert.Equal(13.7f, set.FumenDifficults.Single(d => d.DifficultIndex == 3).Level);
-        }
-
-        using var zip = ZipFile.OpenRead(storage.GetZipPath(MusicId));
-        var entry = zip.GetEntry($"music/music{MusicId:D4}/Music.xml");
-        Assert.NotNull(entry);
-        using var reader = new StreamReader(entry!.Open());
-        Assert.Contains("Uploaded Title", await reader.ReadToEndAsync());
     }
 
     [Fact]
@@ -231,7 +173,6 @@ public class FumenControllerTests
             new FumenStateService(testDb.Factory, storage),
             storage,
             new FumenChartService(storage, true),
-            new FumenXmlService(storage),
             null!,
             null!);
 

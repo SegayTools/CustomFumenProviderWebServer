@@ -68,22 +68,6 @@ namespace CustomFumenProviderWebServer.Services
             return Path.Combine(GetStoragePath(musicId), FumenDifficultNames.GetArchiveFileName(diffIdx));
         }
 
-        /// <summary>
-        /// 用户提供的 Music.xml 原样归档路径：fumen{musicId:D4}/music.xml
-        /// </summary>
-        public string GetArchiveXmlPath(int musicId)
-        {
-            return Path.Combine(GetStoragePath(musicId), "music.xml");
-        }
-
-        /// <summary>
-        /// 游戏读取的处理后 Music.xml：opt/music/music{musicId:D4}/Music.xml
-        /// </summary>
-        public string GetOptMusicXmlPath(int musicId)
-        {
-            return Path.Combine(GetOptMusicFolder(musicId), "Music.xml");
-        }
-
         public string GetZipPath(int musicId)
         {
             return Path.Combine(GetStoragePath(musicId), $"fumen{musicId:D4}.zip");

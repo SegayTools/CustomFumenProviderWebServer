@@ -35,7 +35,6 @@ namespace CustomFumenProviderWebServer.Controllers
         private readonly FumenStateService fumenStateService;
         private readonly FumenStorageService fumenStorageService;
         private readonly FumenChartService fumenChartService;
-        private readonly FumenXmlService fumenXmlService;
         private readonly FumenRemovalService fumenRemovalService;
         private readonly IFileCacheListService fileCacheListService;
         private readonly string fumenFolderPath;
@@ -83,7 +82,7 @@ namespace CustomFumenProviderWebServer.Controllers
             return result;
         }
 
-        public FumenController(ILogger<FumenController> logger, IDbContextFactory<FumenDataDB> fumenDataDBFactory, AudioService audioService, JacketService jacketService, MusicXmlService musicXmlService, FumenOperationLock fumenOperationLock, AdminAuthService adminAuthService, FumenStateService fumenStateService, FumenStorageService fumenStorageService, FumenChartService fumenChartService, FumenXmlService fumenXmlService, FumenRemovalService fumenRemovalService, IFileCacheListService fileCacheListService)
+        public FumenController(ILogger<FumenController> logger, IDbContextFactory<FumenDataDB> fumenDataDBFactory, AudioService audioService, JacketService jacketService, MusicXmlService musicXmlService, FumenOperationLock fumenOperationLock, AdminAuthService adminAuthService, FumenStateService fumenStateService, FumenStorageService fumenStorageService, FumenChartService fumenChartService, FumenRemovalService fumenRemovalService, IFileCacheListService fileCacheListService)
         {
             this.logger = logger;
             this.fumenDataDBFactory = fumenDataDBFactory;
@@ -95,7 +94,6 @@ namespace CustomFumenProviderWebServer.Controllers
             this.fumenStateService = fumenStateService;
             this.fumenStorageService = fumenStorageService;
             this.fumenChartService = fumenChartService;
-            this.fumenXmlService = fumenXmlService;
             this.fumenRemovalService = fumenRemovalService;
             this.fileCacheListService = fileCacheListService;
             this.fumenFolderPath = Environment.GetEnvironmentVariable("FumenDirectory");
@@ -433,14 +431,10 @@ namespace CustomFumenProviderWebServer.Controllers
             }
             traceLog("copy fumen files done");
 
-            //step5: archive provided Music.xml and generate processed Music.xml
+            //step5: generate Music.xml
+
             try
             {
-                //用户提供的 Music.xml 原样归档到 fumen{musicId}/music.xml
-                var archiveXmlResult = await fumenXmlService.ArchiveProvidedXmlAsync(generatedTempFolder, xmlFilePath);
-                if (!archiveXmlResult.IsSuccess)
-                    return check(new(false, archiveXmlResult.Message));
-
                 var outputXmlFilePath = Path.Combine(fumenFolder, "Music.xml");
                 await musicXmlService.GenerateMusicXml(set, outputXmlFilePath);
             }
@@ -650,11 +644,6 @@ namespace CustomFumenProviderWebServer.Controllers
 
             try
             {
-                //用户提供的 Music.xml 原样归档到 fumen{musicId}/music.xml
-                var archiveXmlResult = await fumenXmlService.ArchiveProvidedXmlAsync(musicId, inputXmlFile);
-                if (!archiveXmlResult.IsSuccess)
-                    return archiveXmlResult;
-
                 var bscFile = Path.Combine(fumenFolder, $"{musicIdStr}_00.ogkr");
                 var advFile = Path.Combine(fumenFolder, $"{musicIdStr}_01.ogkr");
                 var expFile = Path.Combine(fumenFolder, $"{musicIdStr}_02.ogkr");

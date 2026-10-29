@@ -15,7 +15,6 @@
 | R-4 | 全部内容写入 `docs/` 本文档 | 已完成 |
 | R-5 | 上传时检查 CREATOR 是否存在且非空白；缺失/空白按默认值 `-` 处理 | 已实现 |
 | R-6 | CREATOR 改写必须可开关，**默认关闭**；关闭时归档与 opt 副本都保持上传原文 | 已实现 |
-| R-7 | 上传/更新提供 Music.xml 时：原样归档为 `fumen{musicId}/music.xml`，再生成处理后的 `opt/music/music{musicId}/Music.xml`；Music.xml 的后处理规则待定 | 已实现（当前“处理”= 现有规范化生成） |
 
 ## 2. 代码事实（F）
 
@@ -44,8 +43,6 @@
 | T-2 | 游戏读取的处理后谱面 | `fumen25666/opt/music/music25666/25666_03.ogkr` |
 | T-3 | 下载包 | `fumen25666/fumen25666.zip`（仅含 `opt/`，归档不进 zip） |
 | T-4 | 元数据 | `fumen25666/info.json`、`jacket.png` |
-| T-5 | 原始 Music.xml 归档 | `fumen25666/music.xml` |
-| T-6 | 处理后的 Music.xml | `fumen25666/opt/music/music25666/Music.xml` |
 
 难度映射：
 
@@ -74,7 +71,6 @@
 | Q-11/Q-12 | CREATOR 校验 | 检查存在且非空白；缺失/空白用 `-` 继续处理，不拒绝上传 |
 | Q-13 | 无法安全改写 | 非合法 UTF-8 或找不到任何头部 tag → 请求失败并回滚，不写坏文件 |
 | Q-14 | 改写开关 | 新增环境变量 `EnableCreatorRewrite`，默认 `false`；开启后才改写 CREATOR，关闭时行为与改动前一致（归档仍保留） |
-| Q-15 | Music.xml 同步 | 用户提供的 XML 原样归档为 `fumen{id}/music.xml`；`opt/.../Music.xml` 由 `MusicXmlService.GenerateMusicXml` 生成。后处理规则未定，暂以现有规范化生成结果作为处理产物 |
 
 ## 5. 实现（I）
 
@@ -88,8 +84,6 @@
 | I-6 | `Models/Tables/FumenDifficult.cs` | `DifficultName` 复用统一映射 |
 | I-7 | `Program.cs` | 注册 `FumenChartService` |
 | I-8 | `Services/FumenChartService.cs` | 新增 `EnableCreatorRewrite` 开关：默认关闭；关闭时归档/副本均原样复制，`RegenerateOptChartAsync` 不触碰文件 |
-| I-9 | `Services/FumenXmlService.cs`（新增） | 把提供的 Music.xml 原子原样复制到 `fumen{id}/music.xml`（投稿时复制到生成目录根） |
-| I-10 | `Services/FumenStorageService.cs` | 新增 `GetArchiveXmlPath`、`GetOptMusicXmlPath` |
 
 行为细节：
 
@@ -101,11 +95,10 @@
 6. 旧谱面没有根目录归档时，重算以现有 opt 文件为源，仍能安全剥离旧前缀。
 7. 归档文件不进入 `fumen{id}.zip` 与 `/fileCache/list`。
 8. 开关 `EnableCreatorRewrite`：默认关闭（未设置/无法解析为 `true` 均视为关闭），启动时读取；关闭时不解析/不改写，归档与 opt 副本都是上传原文。
-9. Music.xml 同步：`deliverFumen` 与 `update/xml` 都会先把提供的 XML 原样写入 `fumen{id}/music.xml`（原子写入），再走现有 `GenerateMusicXml` 生成 `opt/.../Music.xml`；`update/info` 等服务端重生成场景不会改写原始归档。归档不进入 zip 与 `/fileCache/list`。
 
 ## 6. 验证（V）
 
-全量测试：`dotnet test` → **123 通过，0 失败**。
+全量测试：`dotnet test` → **118 通过，0 失败**。
 
 | ID | 测试 | 覆盖 |
 |---|---|---|
@@ -121,9 +114,7 @@
 | V-10 | `MusicXmlServiceTests.*` | 解析剥离前缀、空白回退、`CREATOR_NOT_A_TAG` 不误匹配 |
 | V-11 | `FumenControllerTests.ChartServiceSwitch_*` | 默认关闭、`EnableCreatorRewrite=true` 时开启 |
 | V-12 | `FumenChartServiceTests.*WhenRewriteDisabled*` | 关闭时字节级原样复制、归档=副本、重算不触碰文件 |
-| V-13 | `FumenXmlServiceTests.*` | 按 musicId/目录归档、覆盖旧归档、源缺失失败 |
-| V-14 | `FumenControllerTests.UpdateMusicXml_*` | 上传 XML 后：原始归档字节一致、opt/Music.xml 规范化生成、DB 与 zip 同步 |
-| V-15 | 现有测试文件 | 全量回归 |
+| V-13 | 现有测试文件 | 全量回归 |
 
 说明：未启动完整服务与 MySQL/HTTP 上传（需外部音视频工具与数据库）；投稿链路的谱面落盘逻辑已抽到 `SaveDeliverChartsAsync` 并直接测试，`update/ogkr` 通过控制器级测试覆盖。
 

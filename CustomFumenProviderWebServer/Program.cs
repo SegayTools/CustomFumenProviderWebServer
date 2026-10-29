@@ -54,7 +54,6 @@ namespace CustomFumenProviderWebServer
             builder.Services.AddSingleton<AdminAuthService>();
             builder.Services.AddSingleton<FumenStorageService>();
             builder.Services.AddSingleton<FumenChartService>();
-            builder.Services.AddSingleton<FumenXmlService>();
             builder.Services.AddSingleton<FumenRemovalService>();
             builder.Services.AddSingleton<FumenStateService>();
 
