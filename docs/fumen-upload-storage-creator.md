@@ -27,8 +27,8 @@
 | F-5 | 单谱面修改 `POST /api/update/ogkr`：`ogkrFormFile / diffIdx(0..4) / musicId / password / changeDiff?`，有整目录+DB 回滚保护 | `FumenController.Public.cs`、`FumenUpdateScope.cs` |
 | F-6 | 定数解析：`Level = FumenConstIntegerPart + FumenConstFractionalPart/100` | `MusicXmlService.cs` |
 | F-7 | 改动前只有读取 CREATOR，没有重写谱面内容的代码 | `MusicXmlService.cs`（改动前） |
-| F-8 | `UpdateSetInfo` 会用磁盘上的 opt 谱面重新解析并写库，因此改写后必须剥离前缀，否则 DB 会存入 `[自制谱 ...]` | `FumenController.Public.cs` |
-| F-9 | `update/xml` 会重算定数并重写 Music.xml；`changeDiff` 也会改定数 | `FumenController.Public.cs` |
+| F-8 | `UpdateSetInfo` 以 `info.json` 为元数据/定数唯一来源：读 info → 写库 → 按需从 info 重渲染 `Music.xml`；仅当 info.json 缺失时从 `Music.xml` 迁移一次。解析 opt 谱面只发生在上传 XML/迁移时，因此 CREATOR 前缀仍必须剥离 | `FumenController.Public.cs`、`FumenStorageService.cs` |
+| F-9 | `update/xml` 把上传的 Music.xml 解析成 `info.json`，再由 `info.json` 渲染 opt/Music.xml；`changeDiff` 改定数后同样先写 info.json | `FumenController.Public.cs` |
 | F-10 | zip 只打包 `opt/`；`/fileCache/list` 只枚举 `opt/`；根目录归档不进两者，但可经 `/files` 访问 | `FumenController.Public.cs`、`FileCacheListService.cs` |
 | F-11 | 重新投稿会先删除 `fumen{id}` 根目录文件，再复制生成内容 | `FumenController.Public.cs` |
 | F-12 | **游戏端 `+` 判定**：`isFumenConstPlus = FumenConstFractionalPart >= fumenLevelPlusBorder`，`fumenLevelPlusBorder = 70` 硬编码。即 `13.70–13.99` 显示 `13+`，`13.00–13.69` 显示 `13` | `D:\sddt160\MU3\Data\DataManager.cs:599`、`MU3\Data\MusicData.cs:126`、`MU3\Data\GameData.cs:552-577` |
@@ -67,7 +67,7 @@
 | Q-7 | 重算触发 | `deliverFumen`、`update/ogkr`（含 `changeDiff`）、`update/xml`；定数变化即重算 |
 | Q-8 | 幂等/保真 | 先剥离旧前缀再套新前缀；只改第一处 CREATOR；保留分隔符/换行/编码/BOM |
 | Q-9 | zip/缓存清单 | 归档都不进，仅 `/files` 直接访问 |
-| Q-10 | 存量回填 | 暂不处理 |
+| Q-10 | 存量回填 | 缺 info.json 的旧谱面在首次 `update/info`、`update/ogkr`、`update/xml`、`fumen/update/file(repackZip)` 时自动从 Music.xml 迁移并落盘 info.json |
 | Q-11/Q-12 | CREATOR 校验 | 检查存在且非空白；缺失/空白用 `-` 继续处理，不拒绝上传 |
 | Q-13 | 无法安全改写 | 非合法 UTF-8 或找不到任何头部 tag → 请求失败并回滚，不写坏文件 |
 | Q-14 | 改写开关 | 新增环境变量 `EnableCreatorRewrite`，默认 `false`；开启后才改写 CREATOR，关闭时行为与改动前一致（归档仍保留） |
@@ -84,6 +84,7 @@
 | I-6 | `Models/Tables/FumenDifficult.cs` | `DifficultName` 复用统一映射 |
 | I-7 | `Program.cs` | 注册 `FumenChartService` |
 | I-8 | `Services/FumenChartService.cs` | 新增 `EnableCreatorRewrite` 开关：默认关闭；关闭时归档/副本均原样复制，`RegenerateOptChartAsync` 不触碰文件 |
+| I-9 | `Controllers/FumenController.Public.cs`、`Services/FumenStorageService.cs` | `info.json` 成为 `Music.xml` 的唯一来源：新增读取/迁移、从 info 渲染 XML；`update/xml`、`update/ogkr`、`update/info`、`fumen/update/file` 全部改为 info 驱动 |
 
 行为细节：
 
@@ -98,7 +99,7 @@
 
 ## 6. 验证（V）
 
-全量测试：`dotnet test` → **118 通过，0 失败**。
+全量测试：`dotnet test` → **127 通过，0 失败**。
 
 | ID | 测试 | 覆盖 |
 |---|---|---|
@@ -114,9 +115,18 @@
 | V-10 | `MusicXmlServiceTests.*` | 解析剥离前缀、空白回退、`CREATOR_NOT_A_TAG` 不误匹配 |
 | V-11 | `FumenControllerTests.ChartServiceSwitch_*` | 默认关闭、`EnableCreatorRewrite=true` 时开启 |
 | V-12 | `FumenChartServiceTests.*WhenRewriteDisabled*` | 关闭时字节级原样复制、归档=副本、重算不触碰文件 |
-| V-13 | 现有测试文件 | 全量回归 |
+| V-13 | `FumenControllerTests.UpdateInfo_RendersMusicXmlFromInfoJson_NotFromDiskXml` | info.json 优先：磁盘 XML 与 info 不一致时，以 info 重渲染 XML/DB |
+| V-14 | `FumenControllerTests.UpdateMusicXml_PersistsUploadedXmlToInfoJson_ThenRendersOptXml` | 上传 XML 只落 info.json，再由 info 渲染 opt XML 与 zip |
+| V-15 | `FumenControllerTests.UpdateInfo_WithoutInfoJson_ImportsLegacyMusicXmlOnce` | 旧目录缺失 info.json 时从 Music.xml 迁移一次 |
+| V-16 | 现有测试文件 | 全量回归 |
+| V-17 | `FumenControllerTests.UpdateXml_UpdatesInfoDbXmlZipAndCreator` | `update/xml`：info/DB/opt XML/zip 定数与 CREATOR、状态、时间；原始归档不变 |
+| V-18 | `FumenControllerTests.UpdateOgkr_UpdatesArchiveOptInfoDbXmlAndZip` | `update/ogkr`：归档原样、opt 处理副本、info/DB 定数与 BPM/Creator/物量、XML/zip |
+| V-19 | `FumenControllerTests.UpdateInfo_UsesInfoJsonAsSource_AndReRendersXmlOnRequest` | `update/info`：info 覆盖 DB、默认不重渲染、按需从 info 重渲染 XML 并重打包 |
+| V-20 | `FumenControllerTests.UpdateRepackZip_RebuildsFromCurrentOpt_AndRefreshesInfo` | `update/repackZip`：按当前 opt 重建 zip、状态保持、info/DB 时间刷新 |
+| V-21 | `FumenControllerTests.UpdateAudio_ZipWithAcbAwb_UpdatesOptAndZip` | `update/audio`：acb/awb/MusicSource.xml 落盘与 zip、状态、时间 |
+| V-22 | `FumenControllerTests.UpdateJacket_Png_GeneratesAssetsAndRefreshesInfo` | `update/jacket`：assets 生成、根 jacket.png、zip、状态、时间 |
 
-说明：未启动完整服务与 MySQL/HTTP 上传（需外部音视频工具与数据库）；投稿链路的谱面落盘逻辑已抽到 `SaveDeliverChartsAsync` 并直接测试，`update/ogkr` 通过控制器级测试覆盖。
+说明：未启动完整服务与 MySQL/HTTP；所有 update 接口（除 `fumen/update/file`）均通过控制器级端到端测试覆盖真实文件树与 SQLite。`update/jacket` 使用真实 PNG 输入与 JacketGenerator，`update/audio` 使用含 acb/awb 的 zip 走直通分支，避免外部转码依赖。
 
 ## 7. 风险（X）
 
@@ -129,31 +139,39 @@
 
 ## 8. opt / zip / fileCache 同步审计
 
+### 8.0 `info.json` 与 `Music.xml` 的唯一来源关系
+
+1. 用户上传/更新的 `Music.xml` 只用于生成或更新 `info.json`，不再直接作为 opt 的 `Music.xml` 落盘。
+2. `opt/music/music{id}/Music.xml` 只能由 `info.json` 渲染（`GenerateMusicXml`）。
+3. `info.json` 是元数据/定数的唯一中间表示；数据库是它的查询副本，写入顺序为 `info.json` → DB → `Music.xml`。
+4. 旧目录缺失 `info.json` 时，首次更新会从 `Music.xml` 迁移一次并落盘；之后不再把 XML 当输入。
+5. `publishFumen` / `readyForPending` / `update/repackZip` 等状态接口只重写 `info.json`，不会改动 `Music.xml`。
+
 ### 8.1 opt 内容的生成来源
 
 | 来源 | 写入 opt 的内容 |
 |---|---|
-| `deliverFumen` | 临时生成完整树：`Music.xml`、5 个 `{id}_0d.ogkr`、`assets/*`、`musicsource/*`，打包 zip 后整体复制到 `fumen{id}` |
+| `deliverFumen` | 先写 `info.json`，再由它渲染 `Music.xml`；5 个 `{id}_0d.ogkr`、`assets/*`、`musicsource/*` 生成后打包 zip，整体复制到 `fumen{id}` |
 | `update/jacket` | `opt/assets/{id}.png`、`{id}_s.png`，同时更新根目录 `jacket.png` |
 | `update/audio` | `opt/musicsource/musicsource{id}/*.acb|*.awb|MusicSource.xml` |
-| `update/xml` | `opt/music/music{id}/Music.xml`，并按库内定数重写所有已存在难度的谱面 CREATOR |
-| `update/ogkr` | 根目录 `{难度}.ogkr` 归档 + `opt/music/music{id}/{id}_0d.ogkr` 处理副本 |
-| `update/info` | 可选重生成 `opt/.../Music.xml`；缺失 opt 时先从 zip 解包 |
+| `update/xml` | 上传 XML → `info.json` → `opt/music/music{id}/Music.xml`；并按库内定数重写所有已存在难度的谱面 CREATOR |
+| `update/ogkr` | 根目录 `{难度}.ogkr` 归档 + `opt/music/music{id}/{id}_0d.ogkr` 处理副本；定数/统计先写回 info.json，再渲染 Music.xml |
+| `update/info` | 从 `info.json` 可选重生成 `opt/.../Music.xml`；缺失 opt 时先从 zip 解包 |
 | `update/repackZip` | 不写 opt，仅按当前 opt 重打包 |
-| `fumen/update/file` | 管理员指定相对路径，可写 opt 内外任意文件 |
+| `fumen/update/file` | 管理员指定相对路径，可写 opt 内外任意文件；`repackZip=true` 时以 info.json 重建 DB 并重渲染 Music.xml |
 
 ### 8.2 各接口的同步动作
 
 | 接口 | opt 写入 | zip 重打包 | DB / info.json | fileCache |
 |---|---|---|---|---|
-| `deliverFumen` | 全量生成 | 生成时打包（来自临时目录） | 插入 set + 写 info.json | 无直接刷新；watcher 可能命中 |
+| `deliverFumen` | 全量生成 | 生成时打包（来自临时目录） | 先写 info.json，再由它渲染 XML 并插入 DB | 无直接刷新；watcher 可能命中 |
 | `update/jacket` | 是 | 每次 | `UpdateStateAsync` | 无直接刷新；watcher |
 | `update/audio` | 是 | 每次 | `UpdateStateAsync` | 无直接刷新；watcher |
-| `update/xml` | 是 | 每次 | `UpdateSetInfo` + `UpdateStateAsync` | 无直接刷新；watcher |
-| `update/ogkr` | 是 | 每次 | `UpdateSetInfo` + `UpdateStateAsync` | 无直接刷新；watcher |
-| `update/info` | 可能 | 仅 `IsZipOutdated` | `UpdateSetInfo` | 无直接刷新；watcher |
+| `update/xml` | 是 | 每次 | 上传 XML→info.json；`UpdateSetInfo` + `UpdateStateAsync` | 无直接刷新；watcher |
+| `update/ogkr` | 是 | 每次 | 定数/统计→info.json；`UpdateSetInfo` + `UpdateStateAsync` | 无直接刷新；watcher |
+| `update/info` | 可能 | 仅 `IsZipOutdated` | 从 info.json 同步 DB；可选重渲染 XML | 无直接刷新；watcher |
 | `update/repackZip` | 否 | 每次 | `UpdateStateAsync` | 无直接刷新；1 分钟扫描 |
-| `fumen/update/file` | 任意路径 | 仅 `repackZip=true` | 仅 `repackZip=true` 时 `UpdateSetInfo` | 仅路径位于 `opt/` 下时 watcher |
+| `fumen/update/file` | 任意路径 | 仅 `repackZip=true` | 仅 `repackZip=true` 时从 info.json 同步并重渲染 XML | 仅路径位于 `opt/` 下时 watcher |
 | `publishFumen` | 否 | 否 | 状态 + 时间 + info.json | 无直接刷新；1 分钟扫描 |
 | `readyForPending` | 否 | 否 | 状态 + 时间 + info.json | 无直接刷新；1 分钟扫描 |
 | `remove` | 删除整个目录 | — | 删除行 | 立即 `TryRemove` |
