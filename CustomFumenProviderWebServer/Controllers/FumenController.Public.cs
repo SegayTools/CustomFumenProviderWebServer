@@ -898,6 +898,35 @@ namespace CustomFumenProviderWebServer.Controllers
             return diff?.Level ?? 0f;
         }
 
+        /// <summary>
+        /// 不提供谱面文件时，只更新指定难度的定数：
+        /// 以 info.json 为准重生成 Music.xml、按新定数重写处理副本，谱面归档与 opt 谱面内容保持不变。
+        /// </summary>
+        async ValueTask<Result> ProcessDifficultyChangeToFile(int musicId, int diffIdx, float changeDiff)
+        {
+            var ensureResult = fumenStorageService.EnsureOptFolder(musicId);
+            if (!ensureResult.IsSuccess)
+                return ensureResult;
+
+            var updateResult = await UpdateSetInfo(
+                musicId,
+                regenerateMusicXml: true,
+                mutate: set =>
+                {
+                    var diff = set.FumenDifficults.FirstOrDefault(d => d.DifficultIndex == diffIdx);
+                    if (diff is null)
+                        return Task.FromResult(new Result(false, $"difficulty {diffIdx} does not exist"));
+
+                    diff.Level = changeDiff;
+                    return Task.FromResult(new Result(true));
+                });
+            if (!updateResult.IsSuccess)
+                return updateResult;
+
+            //Music.xml 已按新定数重生成，处理副本里的 [自制谱 Lv.x] 也要同步
+            return await RegenerateProcessedCharts(musicId);
+        }
+
         async ValueTask<Result> ProcessAudioToFile(string inputFile, string originalFileName, int musicId, string title)
         {
             var musicIdStr = musicId.ToString().PadLeft(4, '0');
@@ -1141,9 +1170,9 @@ namespace CustomFumenProviderWebServer.Controllers
         }
 
         /// <summary>
-        /// 更新谱面文件
+        /// 更新谱面文件或仅更新定数
         /// </summary>
-        /// <param name="ogkrFormFile">.ogkr谱面文件</param>
+        /// <param name="ogkrFormFile">.ogkr谱面文件；不传时仅修改 changeDiff 指定的难度定数</param>
         /// <param name="diffIdx">谱面难度, 0绿谱/1黄谱/2红谱/3紫谱/4白谱</param>
         /// <param name="changeDiff">需要变动难度定数，比如更改到14.70, 不填则不改动</param>
         /// <param name="musicId">谱面公开musicId, 比如22857</param>
@@ -1162,10 +1191,16 @@ namespace CustomFumenProviderWebServer.Controllers
             if (diffIdx is < 0 or > 4)
                 return HttpStatus(new(false, $"diffIdx must be between 0 and 4, got {diffIdx}"));
 
+            if (ogkrFormFile is null && changeDiff is null)
+                return HttpStatus(new(false, "ogkr file is required when changeDiff is not provided"));
+
             using var _ = await fumenOperationLock.AcquireAsync(musicId);
             await using var updateScope = await FumenUpdateScope.BeginAsync(fumenDataDBFactory, fumenStorageService, logger, musicId);
 
-            var result = await WithDownloadedTempFile(ogkrFormFile, file => ProcessFumenToFile(file, musicId, diffIdx, changeDiff));
+            //不传谱面文件时只改定数:不触碰谱面归档/opt 谱面,只重生成 Music.xml、处理副本与 zip
+            var result = ogkrFormFile is null
+                ? await ProcessDifficultyChangeToFile(musicId, diffIdx, changeDiff!.Value)
+                : await WithDownloadedTempFile(ogkrFormFile, file => ProcessFumenToFile(file, musicId, diffIdx, changeDiff));
             if (!result.IsSuccess)
                 return HttpStatus(result);
 

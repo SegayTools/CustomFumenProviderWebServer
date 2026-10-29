@@ -96,6 +96,7 @@
 6. 旧谱面没有根目录归档时，重算以现有 opt 文件为源，仍能安全剥离旧前缀。
 7. 归档文件不进入 `fumen{id}.zip` 与 `/fileCache/list`。
 8. 开关 `EnableCreatorRewrite`：默认关闭（未设置/无法解析为 `true` 均视为关闭），启动时读取；关闭时不解析/不改写，归档与 opt 副本都是上传原文。
+9. `update/ogkr` 的谱面文件可省略：只传 `changeDiff` 时仅修改该难度定数，以 info.json 为准重生成 Music.xml、按新定数重写处理副本，并重打包 zip；不写根目录归档、不覆盖 opt 谱面内容。既不传文件也不传 `changeDiff` 返回 400。
 
 ## 6. 验证（V）
 
@@ -155,7 +156,7 @@
 | `update/jacket` | `opt/assets/{id}.png`、`{id}_s.png`，同时更新根目录 `jacket.png` |
 | `update/audio` | `opt/musicsource/musicsource{id}/*.acb|*.awb|MusicSource.xml` |
 | `update/xml` | 上传 XML → `info.json` → `opt/music/music{id}/Music.xml`；并按库内定数重写所有已存在难度的谱面 CREATOR |
-| `update/ogkr` | 根目录 `{难度}.ogkr` 归档 + `opt/music/music{id}/{id}_0d.ogkr` 处理副本；定数/统计先写回 info.json，再渲染 Music.xml |
+| `update/ogkr` | 根目录 `{难度}.ogkr` 归档 + `opt/music/music{id}/{id}_0d.ogkr` 处理副本；定数/统计先写回 info.json，再渲染 Music.xml。不传谱面文件时只改定数：不写归档/谱面，仅重渲染 Music.xml 并重写处理副本 |
 | `update/info` | 从 `info.json` 可选重生成 `opt/.../Music.xml`；缺失 opt 时先从 zip 解包 |
 | `update/repackZip` | 不写 opt，仅按当前 opt 重打包 |
 | `fumen/update/file` | 管理员指定相对路径，可写 opt 内外任意文件；`repackZip=true` 时以 info.json 重建 DB 并重渲染 Music.xml |
@@ -169,6 +170,7 @@
 | `update/audio` | 是 | 每次 | `UpdateStateAsync` | 无直接刷新；watcher |
 | `update/xml` | 是 | 每次 | 上传 XML→info.json；`UpdateSetInfo` + `UpdateStateAsync` | 无直接刷新；watcher |
 | `update/ogkr` | 是 | 每次 | 定数/统计→info.json；`UpdateSetInfo` + `UpdateStateAsync` | 无直接刷新；watcher |
+| `update/ogkr`（仅定数） | 仅重渲染 Music.xml + 重写处理副本 | 每次 | 定数→info.json；`UpdateSetInfo` + `UpdateStateAsync` | 无直接刷新；watcher |
 | `update/info` | 可能 | 仅 `IsZipOutdated` | 从 info.json 同步 DB；可选重渲染 XML | 无直接刷新；watcher |
 | `update/repackZip` | 否 | 每次 | `UpdateStateAsync` | 无直接刷新；1 分钟扫描 |
 | `fumen/update/file` | 任意路径 | 仅 `repackZip=true` | 仅 `repackZip=true` 时从 info.json 同步并重渲染 XML | 仅路径位于 `opt/` 下时 watcher |

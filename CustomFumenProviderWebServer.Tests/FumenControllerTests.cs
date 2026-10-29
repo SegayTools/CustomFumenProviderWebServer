@@ -1,6 +1,8 @@
 using System.IO.Compression;
 using System.Security.Cryptography;
 using System.Text;
+using System.Xml.Linq;
+using System.Xml.XPath;
 using CustomFumenProviderWebServer.Controllers;
 using CustomFumenProviderWebServer.Models;
 using CustomFumenProviderWebServer.Models.Tables;
@@ -85,6 +87,85 @@ public class FumenControllerTests
         Assert.NotNull(masterDiff);
         Assert.Equal(13f, masterDiff!.Level);
         Assert.Equal("NewAuthor", masterDiff.Creator);
+    }
+
+    [Fact]
+    public async Task UpdateOgkrFumen_WithoutFile_OnlyChangesDifficulty()
+    {
+        using var temp = new TempFolderScope();
+        using var testDb = new TestDatabase();
+        using var env = UseFumenDirectory(temp.Path);
+        var storage = new FumenStorageService(temp.Path);
+        var musicXmlService = new MusicXmlService(NullLogger<MusicXmlService>.Instance);
+        var controller = await PrepareAsync(testDb, storage, musicXmlService);
+
+        var result = await controller.UpdateOgkrFumen(null!, 13.7f, 3, MusicId, Password);
+
+        Assert.True(result.IsSuccess, result.Message);
+
+        //没有谱面文件时不生成根目录归档
+        Assert.False(File.Exists(storage.GetArchivePath(MusicId, 3)));
+
+        //只改 CREATOR 的 Lv，原谱师保留
+        var master = await File.ReadAllTextAsync(storage.GetOptFumenPath(MusicId, 3));
+        Assert.Contains("CREATOR\t[自制谱 Lv.13+] Author3", master);
+
+        //其它难度按各自定数重写
+        var expert = await File.ReadAllTextAsync(storage.GetOptFumenPath(MusicId, 2));
+        Assert.Contains("CREATOR\t[自制谱 Lv.12] Author2", expert);
+
+        await using (var verifyDb = testDb.Factory.CreateDbContext())
+        {
+            var masterDiff = await verifyDb.FumenDifficults.FindAsync(MusicId, 3);
+            Assert.NotNull(masterDiff);
+            Assert.Equal(13.7f, masterDiff!.Level);
+        }
+
+        var musicXml = XDocument.Load(Path.Combine(storage.GetOptMusicFolder(MusicId), "Music.xml"));
+        var masterData = musicXml.XPathSelectElement("/MusicData/FumenData/FumenData[4]");
+        Assert.NotNull(masterData);
+        Assert.Equal("13", masterData!.Element("FumenConstIntegerPart")?.Value);
+        Assert.Equal("70", masterData.Element("FumenConstFractionalPart")?.Value);
+
+        using var zip = ZipFile.OpenRead(storage.GetZipPath(MusicId));
+        var entry = zip.GetEntry($"music/music{MusicId:D4}/{MusicId:D4}_03.ogkr");
+        Assert.NotNull(entry);
+        using var reader = new StreamReader(entry!.Open());
+        Assert.Contains("[自制谱 Lv.13+] Author3", await reader.ReadToEndAsync());
+    }
+
+    [Fact]
+    public async Task UpdateOgkrFumen_WithoutFileOrChangeDiff_Returns400()
+    {
+        using var temp = new TempFolderScope();
+        using var testDb = new TestDatabase();
+        using var env = UseFumenDirectory(temp.Path);
+        var storage = new FumenStorageService(temp.Path);
+        var musicXmlService = new MusicXmlService(NullLogger<MusicXmlService>.Instance);
+        var controller = await PrepareAsync(testDb, storage, musicXmlService);
+
+        var result = await controller.UpdateOgkrFumen(null!, null, 3, MusicId, Password);
+
+        Assert.False(result.IsSuccess);
+        Assert.Equal(400, controller.HttpContext.Response.StatusCode);
+        Assert.False(File.Exists(storage.GetArchivePath(MusicId, 3)));
+    }
+
+    [Fact]
+    public async Task UpdateOgkrFumen_WithoutFile_MissingDifficulty_Returns400()
+    {
+        using var temp = new TempFolderScope();
+        using var testDb = new TestDatabase();
+        using var env = UseFumenDirectory(temp.Path);
+        var storage = new FumenStorageService(temp.Path);
+        var musicXmlService = new MusicXmlService(NullLogger<MusicXmlService>.Instance);
+        var controller = await PrepareAsync(testDb, storage, musicXmlService);
+
+        var result = await controller.UpdateOgkrFumen(null!, 13.7f, 4, MusicId, Password);
+
+        Assert.False(result.IsSuccess);
+        Assert.Equal(400, controller.HttpContext.Response.StatusCode);
+        Assert.False(File.Exists(storage.GetArchivePath(MusicId, 4)));
     }
 
     [Fact]
