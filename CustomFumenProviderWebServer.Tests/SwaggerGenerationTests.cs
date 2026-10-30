@@ -11,7 +11,7 @@ namespace CustomFumenProviderWebServer.Tests;
 public class SwaggerGenerationTests
 {
     [Fact]
-    public void SwaggerDocument_CanBeGenerated_WithEditorUploadEndpoint()
+    public void SwaggerDocument_CanBeGenerated_WithExpectedEndpoints()
     {
         var services = new ServiceCollection();
         services.AddLogging();
@@ -32,6 +32,9 @@ public class SwaggerGenerationTests
         Assert.NotNull(operation);
         Assert.NotNull(operation.RequestBody);
         Assert.True(operation.RequestBody.Content.ContainsKey("multipart/form-data"));
+
+        Assert.True(document.Paths.ContainsKey("/api/update/file"));
+        Assert.False(document.Paths.ContainsKey("/api/fumen/update/file"));
     }
 
     private sealed class TestWebHostEnvironment : IWebHostEnvironment

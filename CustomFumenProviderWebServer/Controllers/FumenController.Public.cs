@@ -1288,7 +1288,7 @@ namespace CustomFumenProviderWebServer.Controllers
         /// <param name="repackZip">写入后是否重打包 zip 并更新 info.json/数据库</param>
         /// <returns>文件写入结果</returns>
         [HttpPost]
-        [Route("fumen/update/file")]
+        [Route("update/file")]
         public async Task<Result> UpdateFile(IFormFile fileFormFile, int musicId, string relativePath, string password, bool repackZip = false)
         {
             if (!adminAuthService.VerifyAdminPassword(password))
