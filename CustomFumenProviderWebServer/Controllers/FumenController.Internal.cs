@@ -31,13 +31,13 @@ namespace CustomFumenProviderWebServer.Controllers
         /// 删除 谱面
         /// </summary>
         /// <param name="musicId">要删除谱面的musicId</param>
-        /// <param name="password">管理员审核密码</param>
+        /// <param name="password">管理员密码，或该谱面作者上传时使用的密码</param>
         /// <returns>删除操作结果</returns>
         [HttpDelete]
         [Route("remove")]
         public async Task<FumenUploadResponse> Remove([FromForm] int musicId, [FromForm] string password)
         {
-            if (!await VerifyPermission(password))
+            if (!await VerifyPermission(password, musicId))
             {
                 HttpContext.Response.StatusCode = 403;
                 return new(false, "no permission");

@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.IO.Compression;
 using System.Security.Cryptography;
 using System.Text;
@@ -7,6 +8,7 @@ using CustomFumenProviderWebServer.Controllers;
 using CustomFumenProviderWebServer.Models;
 using CustomFumenProviderWebServer.Models.Tables;
 using CustomFumenProviderWebServer.Services;
+using CustomFumenProviderWebServer.Services.CacheManager;
 using CustomFumenProviderWebServer.Utils;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
@@ -310,8 +312,8 @@ public class FumenControllerTests
             new FumenStateService(testDb.Factory, storage),
             storage,
             new FumenChartService(storage, true),
-            null!,
-            null!);
+            new FumenRemovalService(testDb.Factory, storage),
+            new FakeFileCacheListService());
 
         controller.ControllerContext = new ControllerContext
         {
@@ -830,6 +832,67 @@ public class FumenControllerTests
         Assert.True(info.UpdateTime >= before);
     }
 
+    [Fact]
+    public async Task Remove_WithOwnerPassword_DeletesStorageAndDatabase()
+    {
+        using var temp = new TempFolderScope();
+        using var testDb = new TestDatabase();
+        using var env = UseFumenDirectory(temp.Path);
+        var storage = new FumenStorageService(temp.Path);
+        var musicXmlService = new MusicXmlService(NullLogger<MusicXmlService>.Instance);
+        var controller = await PrepareWithInfoAsync(testDb, storage, musicXmlService);
+
+        var result = await controller.Remove(MusicId, Password);
+
+        Assert.True(result.IsSuccess, result.Message);
+        Assert.False(Directory.Exists(storage.GetStoragePath(MusicId)));
+
+        await using var db = testDb.Factory.CreateDbContext();
+        Assert.Null(await db.FumenSets.FindAsync(MusicId));
+        Assert.Null(await db.FumenOwners.FindAsync(MusicId));
+        Assert.Empty(await db.FumenDifficults.Where(x => x.MusicId == MusicId).ToListAsync());
+    }
+
+    [Fact]
+    public async Task Remove_WithWrongPassword_ReturnsNoPermissionAndKeepsData()
+    {
+        using var temp = new TempFolderScope();
+        using var testDb = new TestDatabase();
+        using var env = UseFumenDirectory(temp.Path);
+        var storage = new FumenStorageService(temp.Path);
+        var musicXmlService = new MusicXmlService(NullLogger<MusicXmlService>.Instance);
+        var controller = await PrepareWithInfoAsync(testDb, storage, musicXmlService);
+
+        var result = await controller.Remove(MusicId, "not-the-password");
+
+        Assert.False(result.IsSuccess);
+        Assert.Equal(StatusCodes.Status403Forbidden, controller.HttpContext.Response.StatusCode);
+        Assert.True(Directory.Exists(storage.GetStoragePath(MusicId)));
+
+        await using var db = testDb.Factory.CreateDbContext();
+        Assert.NotNull(await db.FumenSets.FindAsync(MusicId));
+    }
+
+    [Fact]
+    public async Task Remove_WithAdminPassword_StillDeletes()
+    {
+        using var temp = new TempFolderScope();
+        using var testDb = new TestDatabase();
+        using var env = UseFumenDirectory(temp.Path);
+        var storage = new FumenStorageService(temp.Path);
+        var musicXmlService = new MusicXmlService(NullLogger<MusicXmlService>.Instance);
+
+        await WithAdminPassword("remove-admin-password", async () =>
+        {
+            var controller = await PrepareWithInfoAsync(testDb, storage, musicXmlService);
+
+            var result = await controller.Remove(MusicId, "remove-admin-password");
+
+            Assert.True(result.IsSuccess, result.Message);
+            Assert.False(Directory.Exists(storage.GetStoragePath(MusicId)));
+        });
+    }
+
     private static byte[] CreateZip(params (string Name, byte[] Content)[] entries)
     {
         using var ms = new MemoryStream();
@@ -868,5 +931,18 @@ public class FumenControllerTests
         {
             Environment.SetEnvironmentVariable("ADMIN_PASSWORD", previous);
         }
+    }
+
+    private sealed class FakeFileCacheListService : IFileCacheListService
+    {
+        public ConcurrentDictionary<int, CacheFumenInfo> CacheFumenMap { get; } = new();
+
+        public Task ForceRebuildAll() => Task.CompletedTask;
+
+        public Task UpdateCacheFumenInfo(int musicId) => Task.CompletedTask;
+
+        public string GetFumenFolderPath() => string.Empty;
+
+        public Task ScanChanges(CancellationToken token) => Task.CompletedTask;
     }
 }
