@@ -126,14 +126,154 @@ public class FumenControllerTests
         var musicXml = XDocument.Load(Path.Combine(storage.GetOptMusicFolder(MusicId), "Music.xml"));
         var masterData = musicXml.XPathSelectElement("/MusicData/FumenData/FumenData[4]");
         Assert.NotNull(masterData);
-        Assert.Equal("13", masterData!.Element("FumenConstIntegerPart")?.Value);
-        Assert.Equal("70", masterData.Element("FumenConstFractionalPart")?.Value);
+        Assert.Equal("0", masterData!.Element("FumenConstIntegerPart")?.Value);
+        Assert.Equal("0", masterData.Element("FumenConstFractionalPart")?.Value);
 
         using var zip = ZipFile.OpenRead(storage.GetZipPath(MusicId));
         var entry = zip.GetEntry($"music/music{MusicId:D4}/{MusicId:D4}_03.ogkr");
         Assert.NotNull(entry);
         using var reader = new StreamReader(entry!.Open());
         Assert.Contains("[自制谱 Lv.13+] Author3", await reader.ReadToEndAsync());
+    }
+
+    [Fact]
+    public async Task UpdateOgkrFumen_WhenRewriteDisabled_KeepsRawChartAndRealLevels()
+    {
+        using var temp = new TempFolderScope();
+        using var testDb = new TestDatabase();
+        using var env = UseFumenDirectory(temp.Path);
+        var storage = new FumenStorageService(temp.Path);
+        var musicXmlService = new MusicXmlService(NullLogger<MusicXmlService>.Instance);
+        var controller = await PrepareAsync(
+            testDb, storage, musicXmlService, enableCreatorRewrite: false);
+
+        var uploadBytes = Encoding.UTF8.GetBytes("VERSION\t1\nCREATOR\tNewAuthor\nBPM_DEF\t180\nTAP\t0\t1\n");
+
+        var result = await controller.UpdateOgkrFumen(
+            CreateFormFile(uploadBytes), 13.7f, 3, MusicId, Password);
+
+        Assert.True(result.IsSuccess, result.Message);
+        Assert.Equal(uploadBytes, await File.ReadAllBytesAsync(storage.GetArchivePath(MusicId, 3)));
+
+        var master = await File.ReadAllTextAsync(storage.GetOptFumenPath(MusicId, 3));
+        Assert.Contains("CREATOR\tNewAuthor", master);
+        Assert.DoesNotContain("[自制谱", master);
+
+        var musicXml = XDocument.Load(Path.Combine(storage.GetOptMusicFolder(MusicId), "Music.xml"));
+        var masterData = musicXml.XPathSelectElement("/MusicData/FumenData/FumenData[4]");
+        Assert.NotNull(masterData);
+        Assert.Equal("13", masterData!.Element("FumenConstIntegerPart")?.Value);
+        Assert.Equal("70", masterData.Element("FumenConstFractionalPart")?.Value);
+
+        using var zip = ZipFile.OpenRead(storage.GetZipPath(MusicId));
+        Assert.DoesNotContain("[自制谱", ReadZipEntry(zip, $"music/music{MusicId:D4}/{MusicId:D4}_03.ogkr"));
+        Assert.Contains("<FumenConstFractionalPart>70</FumenConstFractionalPart>",
+            ReadZipEntry(zip, $"music/music{MusicId:D4}/Music.xml"));
+    }
+
+    [Fact]
+    public async Task UpdateOgkrFumen_WhenRewriteDisabled_RestoresProcessedChart()
+    {
+        using var temp = new TempFolderScope();
+        using var testDb = new TestDatabase();
+        using var env = UseFumenDirectory(temp.Path);
+        var storage = new FumenStorageService(temp.Path);
+        var musicXmlService = new MusicXmlService(NullLogger<MusicXmlService>.Instance);
+        var controller = await PrepareAsync(
+            testDb, storage, musicXmlService, enableCreatorRewrite: false);
+
+        await File.WriteAllTextAsync(
+            storage.GetArchivePath(MusicId, 3),
+            "VERSION\t1\nCREATOR\tAuthor3\nBPM_DEF\t180\n");
+        await File.WriteAllTextAsync(
+            storage.GetOptFumenPath(MusicId, 3),
+            "VERSION\t1\nCREATOR\t[自制谱 Lv.13+] Author3\nBPM_DEF\t180\n");
+
+        var result = await controller.UpdateOgkrFumen(null!, 13.7f, 3, MusicId, Password);
+
+        Assert.True(result.IsSuccess, result.Message);
+
+        var master = await File.ReadAllTextAsync(storage.GetOptFumenPath(MusicId, 3));
+        Assert.Contains("CREATOR\tAuthor3", master);
+        Assert.DoesNotContain("[自制谱", master);
+
+        var musicXml = XDocument.Load(Path.Combine(storage.GetOptMusicFolder(MusicId), "Music.xml"));
+        var masterData = musicXml.XPathSelectElement("/MusicData/FumenData/FumenData[4]");
+        Assert.NotNull(masterData);
+        Assert.Equal("13", masterData!.Element("FumenConstIntegerPart")?.Value);
+        Assert.Equal("70", masterData.Element("FumenConstFractionalPart")?.Value);
+
+        using var zip = ZipFile.OpenRead(storage.GetZipPath(MusicId));
+        Assert.DoesNotContain("[自制谱", ReadZipEntry(zip, $"music/music{MusicId:D4}/{MusicId:D4}_03.ogkr"));
+    }
+
+    [Fact]
+    public async Task UpdateOgkrFumen_WhenRewriteDisabled_KeepsUploadedPrefixUntilStartupCheck()
+    {
+        using var temp = new TempFolderScope();
+        using var testDb = new TestDatabase();
+        using var env = UseFumenDirectory(temp.Path);
+        var storage = new FumenStorageService(temp.Path);
+        var musicXmlService = new MusicXmlService(NullLogger<MusicXmlService>.Instance);
+        var controller = await PrepareAsync(
+            testDb, storage, musicXmlService, enableCreatorRewrite: false);
+
+        var uploadBytes = Encoding.UTF8.GetBytes(
+            "VERSION\t1\nCREATOR\t[自制谱 Lv.13+] NewAuthor\nBPM_DEF\t180\n");
+
+        var result = await controller.UpdateOgkrFumen(
+            CreateFormFile(uploadBytes), 13.7f, 3, MusicId, Password);
+
+        Assert.True(result.IsSuccess, result.Message);
+        Assert.Equal(uploadBytes, await File.ReadAllBytesAsync(storage.GetArchivePath(MusicId, 3)));
+        Assert.Equal(uploadBytes, await File.ReadAllBytesAsync(storage.GetOptFumenPath(MusicId, 3)));
+
+        var info = await ReadInfoAsync(storage);
+        Assert.Equal("NewAuthor", info.FumenDifficults.First(d => d.DifficultIndex == 3).Creator);
+
+        var musicXml = XDocument.Load(Path.Combine(storage.GetOptMusicFolder(MusicId), "Music.xml"));
+        var masterData = musicXml.XPathSelectElement("/MusicData/FumenData/FumenData[4]");
+        Assert.NotNull(masterData);
+        Assert.Equal("13", masterData!.Element("FumenConstIntegerPart")?.Value);
+        Assert.Equal("70", masterData.Element("FumenConstFractionalPart")?.Value);
+    }
+
+    [Fact]
+    public async Task UpdateMusicXml_WhenRewriteDisabled_RendersRealLevels()
+    {
+        using var temp = new TempFolderScope();
+        using var testDb = new TestDatabase();
+        using var env = UseFumenDirectory(temp.Path);
+        var storage = new FumenStorageService(temp.Path);
+        var musicXmlService = new MusicXmlService(NullLogger<MusicXmlService>.Instance);
+        var controller = await PrepareWithInfoAsync(
+            testDb, storage, musicXmlService, enableCreatorRewrite: false);
+
+        var uploadedSet = CreateSeedSet();
+        uploadedSet.Title = "Disabled XML Title";
+        uploadedSet.FumenDifficults.First(d => d.DifficultIndex == 3).Level = 14.75f;
+        var uploadPath = Path.Combine(temp.Path, "upload.xml");
+        var generateResult = await musicXmlService.GenerateMusicXml(uploadedSet, uploadPath);
+        Assert.True(generateResult.IsSuccess, generateResult.Message);
+
+        var result = await controller.UpdateMusicXml(
+            CreateFormFile(await File.ReadAllBytesAsync(uploadPath), "Music.xml"), MusicId, Password);
+
+        Assert.True(result.IsSuccess, result.Message);
+
+        var info = await ReadInfoAsync(storage);
+        Assert.Equal("Disabled XML Title", info.Title);
+        Assert.Equal(14.75f, info.FumenDifficults.First(d => d.DifficultIndex == 3).Level);
+
+        var xmlText = await File.ReadAllTextAsync(Path.Combine(storage.GetOptMusicFolder(MusicId), "Music.xml"));
+        Assert.Contains("<FumenConstIntegerPart>14</FumenConstIntegerPart>", xmlText);
+        Assert.Contains("<FumenConstFractionalPart>75</FumenConstFractionalPart>", xmlText);
+        Assert.Contains("CREATOR\tAuthor3", await File.ReadAllTextAsync(storage.GetOptFumenPath(MusicId, 3)));
+        Assert.DoesNotContain("[自制谱", await File.ReadAllTextAsync(storage.GetOptFumenPath(MusicId, 3)));
+
+        using var zip = ZipFile.OpenRead(storage.GetZipPath(MusicId));
+        Assert.Contains("<FumenConstFractionalPart>75</FumenConstFractionalPart>",
+            ReadZipEntry(zip, $"music/music{MusicId:D4}/Music.xml"));
     }
 
     [Fact]
@@ -200,7 +340,8 @@ public class FumenControllerTests
         FumenStorageService storage,
         MusicXmlService musicXmlService,
         AudioService? audioService = null,
-        JacketService? jacketService = null)
+        JacketService? jacketService = null,
+        bool enableCreatorRewrite = true)
     {
         var seedSet = CreateSeedSet();
         var musicFolder = storage.GetOptMusicFolder(MusicId);
@@ -221,7 +362,13 @@ public class FumenControllerTests
             await db.SaveChangesAsync();
         }
 
-        return CreateController(testDb, storage, musicXmlService, audioService, jacketService);
+        return CreateController(
+            testDb,
+            storage,
+            musicXmlService,
+            audioService,
+            jacketService,
+            enableCreatorRewrite);
     }
 
     /// <summary>
@@ -233,9 +380,16 @@ public class FumenControllerTests
         FumenStorageService storage,
         MusicXmlService musicXmlService,
         AudioService? audioService = null,
-        JacketService? jacketService = null)
+        JacketService? jacketService = null,
+        bool enableCreatorRewrite = true)
     {
-        var controller = await PrepareAsync(testDb, storage, musicXmlService, audioService, jacketService);
+        var controller = await PrepareAsync(
+            testDb,
+            storage,
+            musicXmlService,
+            audioService,
+            jacketService,
+            enableCreatorRewrite);
 
         var seedSet = CreateSeedSet();
         var writeInfo = await storage.WriteInfoJsonAsync(seedSet);
@@ -299,19 +453,31 @@ public class FumenControllerTests
         FumenStorageService storage,
         MusicXmlService musicXmlService,
         AudioService? audioService = null,
-        JacketService? jacketService = null)
+        JacketService? jacketService = null,
+        bool enableCreatorRewrite = true)
     {
+        var operationLock = new FumenOperationLock();
+        var chartService = new FumenChartService(storage, enableCreatorRewrite);
+        var consistencyService = new FumenOptConsistencyService(
+            storage,
+            chartService,
+            musicXmlService,
+            testDb.Factory,
+            operationLock,
+            NullLogger<FumenOptConsistencyService>.Instance);
+
         var controller = new FumenController(
             NullLogger<FumenController>.Instance,
             testDb.Factory,
             audioService!,
             jacketService!,
             musicXmlService,
-            new FumenOperationLock(),
+            operationLock,
             new AdminAuthService(NullLogger<AdminAuthService>.Instance),
             new FumenStateService(testDb.Factory, storage),
             storage,
-            new FumenChartService(storage, true),
+            chartService,
+            consistencyService,
             new FumenRemovalService(testDb.Factory, storage),
             new FakeFileCacheListService());
 
@@ -552,7 +718,7 @@ public class FumenControllerTests
     }
 
     [Fact]
-    public async Task UpdateInfo_WithoutInfoJson_ImportsLegacyMusicXmlOnce()
+    public async Task UpdateInfo_WithoutInfoJson_RebuildsFromDatabase_NotFromOptXml()
     {
         using var temp = new TempFolderScope();
         using var testDb = new TestDatabase();
@@ -561,22 +727,55 @@ public class FumenControllerTests
         var musicXmlService = new MusicXmlService(NullLogger<MusicXmlService>.Instance);
         var controller = await PrepareAsync(testDb, storage, musicXmlService);
 
+        //opt/Music.xml 与数据库故意不一致：info.json 只能从数据库重建
         var legacySet = CreateSeedSet();
         legacySet.Title = "Legacy Title";
+        legacySet.FumenDifficults.First(d => d.DifficultIndex == 3).Level = 9.99f;
         await musicXmlService.GenerateMusicXml(legacySet, Path.Combine(storage.GetOptMusicFolder(MusicId), "Music.xml"));
 
-        var result = await controller.UpdateSetInfo(MusicId, Password);
+        var result = await controller.UpdateSetInfo(MusicId, Password, reGenerateMusicXml: true);
 
         Assert.True(result.IsSuccess, result.Message);
 
         var info = await storage.ReadInfoJsonAsync(MusicId);
         Assert.True(info.IsSuccess, info.Message);
-        Assert.Equal("Legacy Title", info.Data.Title);
+        Assert.Equal("Test Song", info.Data.Title);
+        Assert.Equal(13f, info.Data.FumenDifficults.First(d => d.DifficultIndex == 3).Level);
+
+        var xmlText = await File.ReadAllTextAsync(Path.Combine(storage.GetOptMusicFolder(MusicId), "Music.xml"));
+        Assert.Contains("Test Song", xmlText);
+        Assert.DoesNotContain("Legacy Title", xmlText);
+        Assert.DoesNotContain("<FumenConstIntegerPart>9</FumenConstIntegerPart>", xmlText);
 
         await using var db = testDb.Factory.CreateDbContext();
         var dbSet = await db.FumenSets.FindAsync(MusicId);
         Assert.NotNull(dbSet);
-        Assert.Equal("Legacy Title", dbSet!.Title);
+        Assert.Equal("Test Song", dbSet!.Title);
+    }
+
+    [Fact]
+    public async Task UpdateInfo_WithoutInfoJsonAndDatabase_ReturnsError()
+    {
+        using var temp = new TempFolderScope();
+        using var testDb = new TestDatabase();
+        using var env = UseFumenDirectory(temp.Path);
+        var storage = new FumenStorageService(temp.Path);
+        var musicXmlService = new MusicXmlService(NullLogger<MusicXmlService>.Instance);
+        var controller = await PrepareAsync(testDb, storage, musicXmlService);
+
+        await using (var db = testDb.Factory.CreateDbContext())
+        {
+            var set = await db.FumenSets.FindAsync(MusicId);
+            Assert.NotNull(set);
+            db.FumenSets.Remove(set!);
+            await db.SaveChangesAsync();
+        }
+
+        var result = await controller.UpdateSetInfo(MusicId, Password);
+
+        Assert.False(result.IsSuccess);
+        Assert.Equal(400, controller.HttpContext.Response.StatusCode);
+        Assert.False(File.Exists(storage.GetInfoJsonPath(MusicId)));
     }
 
     [Fact]
@@ -609,8 +808,8 @@ public class FumenControllerTests
 
         var xmlText = await File.ReadAllTextAsync(Path.Combine(storage.GetOptMusicFolder(MusicId), "Music.xml"));
         Assert.Contains("XML Updated Title", xmlText);
-        Assert.Contains("<FumenConstIntegerPart>14</FumenConstIntegerPart>", xmlText);
-        Assert.Contains("<FumenConstFractionalPart>75</FumenConstFractionalPart>", xmlText);
+        Assert.Contains("<FumenConstIntegerPart>0</FumenConstIntegerPart>", xmlText);
+        Assert.Contains("<FumenConstFractionalPart>0</FumenConstFractionalPart>", xmlText);
 
         Assert.Contains("[自制谱 Lv.14+] Author3",
             await File.ReadAllTextAsync(storage.GetOptFumenPath(MusicId, 3)));
@@ -662,13 +861,13 @@ public class FumenControllerTests
         Assert.True(info.UpdateTime >= before);
 
         var xmlText = await File.ReadAllTextAsync(Path.Combine(storage.GetOptMusicFolder(MusicId), "Music.xml"));
-        Assert.Contains("<FumenConstIntegerPart>15</FumenConstIntegerPart>", xmlText);
-        Assert.Contains("<FumenConstFractionalPart>50</FumenConstFractionalPart>", xmlText);
+        Assert.Contains("<FumenConstIntegerPart>0</FumenConstIntegerPart>", xmlText);
+        Assert.Contains("<FumenConstFractionalPart>0</FumenConstFractionalPart>", xmlText);
 
         using var zip = ZipFile.OpenRead(storage.GetZipPath(MusicId));
         Assert.Contains("[自制谱 Lv.15] NewAuthor",
             ReadZipEntry(zip, $"music/music{MusicId:D4}/{MusicId:D4}_03.ogkr"));
-        Assert.Contains("<FumenConstFractionalPart>50</FumenConstFractionalPart>",
+        Assert.Contains("<FumenConstFractionalPart>0</FumenConstFractionalPart>",
             ReadZipEntry(zip, $"music/music{MusicId:D4}/Music.xml"));
 
         await using var db = testDb.Factory.CreateDbContext();
@@ -723,6 +922,33 @@ public class FumenControllerTests
 
         using var zip = ZipFile.OpenRead(storage.GetZipPath(MusicId));
         Assert.Contains("Info Source Title", ReadZipEntry(zip, $"music/music{MusicId:D4}/Music.xml"));
+    }
+
+    [Fact]
+    public async Task UpdateInfo_WhenZipStale_RepacksIt()
+    {
+        using var temp = new TempFolderScope();
+        using var testDb = new TestDatabase();
+        using var env = UseFumenDirectory(temp.Path);
+        var storage = new FumenStorageService(temp.Path);
+        var musicXmlService = new MusicXmlService(NullLogger<MusicXmlService>.Instance);
+        var controller = await PrepareWithInfoAsync(testDb, storage, musicXmlService);
+
+        var changedChart = "VERSION\t1\nCREATOR\tChangedAuthor\nBPM_DEF\t190\n";
+        var changedPath = storage.GetOptFumenPath(MusicId, 0);
+        await File.WriteAllTextAsync(changedPath, changedChart);
+        // 避免创建 zip 与改文件落在同一时间精度内，显式让 opt 比 zip 新
+        File.SetLastWriteTimeUtc(changedPath, DateTime.UtcNow.AddMinutes(1));
+
+        var result = await controller.UpdateSetInfo(MusicId, Password, reGenerateMusicXml: false);
+
+        Assert.True(result.IsSuccess, result.Message);
+
+        using var zip = ZipFile.OpenRead(storage.GetZipPath(MusicId));
+        Assert.Equal(changedChart, ReadZipEntry(zip, $"music/music{MusicId:D4}/{MusicId:D4}_00.ogkr"));
+
+        var info = await ReadInfoAsync(storage);
+        Assert.Equal("Test Song", info.Title);
     }
 
     [Fact]

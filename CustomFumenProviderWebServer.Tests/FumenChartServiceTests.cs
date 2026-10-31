@@ -291,6 +291,55 @@ public class FumenChartServiceTests
     }
 
     [Fact]
+    public async Task RegenerateOptChart_WhenRewriteDisabled_RestoresArchiveBytes()
+    {
+        using var temp = new TempFolderScope();
+        var storage = new FumenStorageService(temp.Path);
+        var service = new FumenChartService(storage, enableCreatorRewrite: false);
+
+        var archive = storage.GetArchivePath(25666, 3);
+        var opt = storage.GetOptFumenPath(25666, 3);
+        Directory.CreateDirectory(Path.GetDirectoryName(archive)!);
+        Directory.CreateDirectory(Path.GetDirectoryName(opt)!);
+        var archiveBytes = Encoding.UTF8.GetBytes("VERSION\t1\nCREATOR\tArchiveAuthor\nBPM_DEF\t180\n");
+        await File.WriteAllBytesAsync(archive, archiveBytes);
+        await File.WriteAllTextAsync(opt, "VERSION\t1\nCREATOR\t[自制谱 Lv.13+] ArchiveAuthor\nBPM_DEF\t180\n");
+
+        var result = await service.RegenerateOptChartAsync(25666, 3, 13.7f);
+
+        Assert.True(result.IsSuccess, result.Message);
+        Assert.Equal(archiveBytes, await File.ReadAllBytesAsync(opt));
+    }
+
+    [Fact]
+    public async Task RegenerateOptChart_WhenRewriteDisabled_WithoutArchive_StripsPrefix()
+    {
+        using var temp = new TempFolderScope();
+        var storage = new FumenStorageService(temp.Path);
+        var service = new FumenChartService(storage, enableCreatorRewrite: false);
+
+        var opt = storage.GetOptFumenPath(25666, 3);
+        Directory.CreateDirectory(Path.GetDirectoryName(opt)!);
+        var body = Encoding.UTF8.GetBytes("VERSION\t1\r\nCREATOR\t[自制谱 Lv.13+] DJ.MSDP\r\nBPM_DEF\t180\r\n");
+        var raw = new byte[body.Length + 3];
+        raw[0] = 0xEF;
+        raw[1] = 0xBB;
+        raw[2] = 0xBF;
+        body.CopyTo(raw, 3);
+        await File.WriteAllBytesAsync(opt, raw);
+
+        var result = await service.RegenerateOptChartAsync(25666, 3, 13.7f);
+
+        Assert.True(result.IsSuccess, result.Message);
+
+        var restored = await File.ReadAllBytesAsync(opt);
+        Assert.Equal(raw[0..3], restored[0..3]);
+        Assert.Equal(
+            "VERSION\t1\r\nCREATOR\tDJ.MSDP\r\nBPM_DEF\t180\r\n",
+            Encoding.UTF8.GetString(restored, 3, restored.Length - 3));
+    }
+
+    [Fact]
     public async Task RegenerateOptChart_WhenRewriteDisabled_DoesNotTouchFile()
     {
         using var temp = new TempFolderScope();
@@ -301,10 +350,138 @@ public class FumenChartServiceTests
         Directory.CreateDirectory(Path.GetDirectoryName(opt)!);
         var original = "VERSION\t1\nCREATOR\tDJ.MSDP\nBPM_DEF\t180\n";
         await File.WriteAllTextAsync(opt, original);
+        var oldTime = new DateTime(2024, 1, 1, 0, 0, 0, DateTimeKind.Utc);
+        File.SetLastWriteTimeUtc(opt, oldTime);
 
         var result = await service.RegenerateOptChartAsync(25666, 3, 13.7f);
 
         Assert.True(result.IsSuccess, result.Message);
         Assert.Equal(original, await File.ReadAllTextAsync(opt));
+        Assert.Equal(oldTime, File.GetLastWriteTimeUtc(opt));
+    }
+
+    [Fact]
+    public async Task RegenerateOptChart_WhenRewriteDisabled_ArchiveAlsoHasPrefix_StripsForIdempotency()
+    {
+        using var temp = new TempFolderScope();
+        var storage = new FumenStorageService(temp.Path);
+        var service = new FumenChartService(storage, enableCreatorRewrite: false);
+
+        var archive = storage.GetArchivePath(25666, 3);
+        var opt = storage.GetOptFumenPath(25666, 3);
+        Directory.CreateDirectory(Path.GetDirectoryName(archive)!);
+        Directory.CreateDirectory(Path.GetDirectoryName(opt)!);
+        const string raw = "VERSION\t1\nCREATOR\t[自制谱 Lv.13+] UploadedAlready\nBPM_DEF\t180\n";
+        await File.WriteAllTextAsync(archive, raw);
+        await File.WriteAllTextAsync(opt, raw);
+
+        var first = await service.RegenerateOptChartAsync(25666, 3, 13.7f);
+
+        Assert.True(first.IsSuccess, first.Message);
+        var restored = await File.ReadAllTextAsync(opt);
+        Assert.Contains("CREATOR\tUploadedAlready", restored);
+        Assert.DoesNotContain("[自制谱", restored);
+        Assert.Equal(raw, await File.ReadAllTextAsync(archive));
+
+        var oldTime = new DateTime(2024, 1, 1, 0, 0, 0, DateTimeKind.Utc);
+        File.SetLastWriteTimeUtc(opt, oldTime);
+
+        var second = await service.RegenerateOptChartAsync(25666, 3, 13.7f);
+
+        Assert.True(second.IsSuccess, second.Message);
+        Assert.Equal(oldTime, File.GetLastWriteTimeUtc(opt));
+    }
+
+    [Fact]
+    public async Task RegenerateOptChart_WhenRewriteDisabled_NonUtf8_DoesNotTouchFile()
+    {
+        using var temp = new TempFolderScope();
+        var storage = new FumenStorageService(temp.Path);
+        var service = new FumenChartService(storage, enableCreatorRewrite: false);
+
+        var opt = storage.GetOptFumenPath(25666, 3);
+        Directory.CreateDirectory(Path.GetDirectoryName(opt)!);
+        var raw = new byte[] { 0xFF, 0xFE, 0x00, 0x01 };
+        await File.WriteAllBytesAsync(opt, raw);
+
+        var result = await service.RegenerateOptChartAsync(25666, 3, 13.7f);
+
+        Assert.True(result.IsSuccess, result.Message);
+        Assert.Equal(raw, await File.ReadAllBytesAsync(opt));
+    }
+
+    [Fact]
+    public async Task RegenerateOptChart_WhenRewriteDisabled_MissingOpt_DoesNotCreateFile()
+    {
+        using var temp = new TempFolderScope();
+        var storage = new FumenStorageService(temp.Path);
+        var service = new FumenChartService(storage, enableCreatorRewrite: false);
+
+        var result = await service.RegenerateOptChartAsync(25666, 3, 13.7f);
+
+        Assert.True(result.IsSuccess, result.Message);
+        Assert.False(File.Exists(storage.GetOptFumenPath(25666, 3)));
+    }
+
+    [Fact]
+    public void TryReadCreatorValue_ReadsBomCrlfValue()
+    {
+        var body = Encoding.UTF8.GetBytes("VERSION\t1\r\nCREATOR\t[自制谱 Lv.13+] DJ.MSDP\r\nBPM_DEF\t180\r\n");
+        var raw = new byte[body.Length + 3];
+        raw[0] = 0xEF;
+        raw[1] = 0xBB;
+        raw[2] = 0xBF;
+        body.CopyTo(raw, 3);
+
+        Assert.True(FumenChartService.TryReadCreatorValue(raw, out var value));
+        Assert.Equal("[自制谱 Lv.13+] DJ.MSDP", value);
+    }
+
+    [Fact]
+    public void TryReadCreatorValue_WithoutCreator_ReturnsFalse()
+    {
+        var raw = Encoding.UTF8.GetBytes("VERSION\t1\nBPM_DEF\t180\n");
+
+        Assert.False(FumenChartService.TryReadCreatorValue(raw, out var value));
+        Assert.Null(value);
+    }
+
+    [Fact]
+    public void TryReadCreatorValue_NonUtf8_ReturnsFalse()
+    {
+        var raw = new byte[] { 0xFF, 0xFE, 0x00, 0x01 };
+
+        Assert.False(FumenChartService.TryReadCreatorValue(raw, out var value));
+        Assert.Null(value);
+    }
+
+    [Theory]
+    [InlineData("[自制谱 Lv.13+] DJ.MSDP", "13+", "DJ.MSDP")]
+    [InlineData("[自制谱 Lv.13] Artist", "13", "Artist")]
+    [InlineData("  [自制谱 Lv.14]   Artist Name  ", "14", "Artist Name")]
+    [InlineData("[自制谱 Lv.] EmptyLevel", "", "EmptyLevel")]
+    public void TryParseSelfMadeCreator_ParsesPrefix(string creator, string expectedLevel, string expectedOriginal)
+    {
+        Assert.True(FumenChartService.TryParseSelfMadeCreator(creator, out var levelText, out var originalCreator));
+        Assert.Equal(expectedLevel, levelText);
+        Assert.Equal(expectedOriginal, originalCreator);
+    }
+
+    [Theory]
+    [InlineData("DJ.MSDP")]
+    [InlineData("")]
+    public void TryParseSelfMadeCreator_WithoutPrefix_ReturnsFalse(string creator)
+    {
+        Assert.False(FumenChartService.TryParseSelfMadeCreator(creator, out var levelText, out var originalCreator));
+        Assert.Null(levelText);
+        Assert.Null(originalCreator);
+    }
+
+    [Fact]
+    public void TryParseSelfMadeCreator_Null_ReturnsFalse()
+    {
+        Assert.False(FumenChartService.TryParseSelfMadeCreator(null!, out var levelText, out var originalCreator));
+        Assert.Null(levelText);
+        Assert.Null(originalCreator);
     }
 }

@@ -40,6 +40,9 @@ namespace CustomFumenProviderWebServer.Services
             return Path.Combine(fumenFolderPath, $"fumen{musicId:D4}");
         }
 
+        /// <summary>谱面根目录（包含所有 fumen{musicId} 目录）。</summary>
+        public string RootPath => fumenFolderPath;
+
         public string GetOptPath(int musicId)
         {
             return Path.Combine(GetStoragePath(musicId), "opt");
@@ -186,6 +189,65 @@ namespace CustomFumenProviderWebServer.Services
             catch (Exception e)
             {
                 return new(false, $"delete fumen storage failed: {e.Message}");
+            }
+        }
+
+        /// <summary>
+        /// opt 目录里存在比 fumen{musicId}.zip 更新的文件时，说明 zip 已过期，需要重新打包。
+        /// (opt 刚由 zip 解包出来时，解包文件会保留原有写入时间，不会误判)
+        /// </summary>
+        public bool IsZipOutdated(int musicId)
+        {
+            var optPath = GetOptPath(musicId);
+            var zipPath = GetZipPath(musicId);
+
+            if (!Directory.Exists(optPath))
+                return false;
+            if (!File.Exists(zipPath))
+                return true;
+
+            try
+            {
+                var zipTime = File.GetLastWriteTimeUtc(zipPath);
+                return Directory
+                    .EnumerateFiles(optPath, "*", SearchOption.AllDirectories)
+                    .Any(file => File.GetLastWriteTimeUtc(file) > zipTime);
+            }
+            catch
+            {
+                return true;
+            }
+        }
+
+        /// <summary>
+        /// 用 opt 目录重新打包 fumen{musicId}.zip，原子覆盖现有 zip。
+        /// </summary>
+        public async Task<Result> RepackZipAsync(int musicId)
+        {
+            var tempFolder = TempPathUtils.GetNewTempFolder();
+            var optPath = GetOptPath(musicId);
+            var zipPath = GetZipPath(musicId);
+
+            try
+            {
+                var tempZipFile = Path.Combine(tempFolder, Path.GetFileName(zipPath));
+                await Task.Run(() =>
+                {
+                    using var fs = File.OpenWrite(tempZipFile);
+                    ZipFile.CreateFromDirectory(optPath, fs, CompressionLevel.SmallestSize, false);
+                });
+
+                File.Move(tempZipFile, zipPath, true);
+
+                return new(true);
+            }
+            catch (Exception e)
+            {
+                return new(false, $"Generate .zip throw exception:{e.Message}");
+            }
+            finally
+            {
+                Directory.Delete(tempFolder, true);
             }
         }
 

@@ -35,6 +35,7 @@ namespace CustomFumenProviderWebServer.Controllers
         private readonly FumenStateService fumenStateService;
         private readonly FumenStorageService fumenStorageService;
         private readonly FumenChartService fumenChartService;
+        private readonly FumenOptConsistencyService fumenOptConsistencyService;
         private readonly FumenRemovalService fumenRemovalService;
         private readonly IFileCacheListService fileCacheListService;
         private readonly string fumenFolderPath;
@@ -82,7 +83,7 @@ namespace CustomFumenProviderWebServer.Controllers
             return result;
         }
 
-        public FumenController(ILogger<FumenController> logger, IDbContextFactory<FumenDataDB> fumenDataDBFactory, AudioService audioService, JacketService jacketService, MusicXmlService musicXmlService, FumenOperationLock fumenOperationLock, AdminAuthService adminAuthService, FumenStateService fumenStateService, FumenStorageService fumenStorageService, FumenChartService fumenChartService, FumenRemovalService fumenRemovalService, IFileCacheListService fileCacheListService)
+        public FumenController(ILogger<FumenController> logger, IDbContextFactory<FumenDataDB> fumenDataDBFactory, AudioService audioService, JacketService jacketService, MusicXmlService musicXmlService, FumenOperationLock fumenOperationLock, AdminAuthService adminAuthService, FumenStateService fumenStateService, FumenStorageService fumenStorageService, FumenChartService fumenChartService, FumenOptConsistencyService fumenOptConsistencyService, FumenRemovalService fumenRemovalService, IFileCacheListService fileCacheListService)
         {
             this.logger = logger;
             this.fumenDataDBFactory = fumenDataDBFactory;
@@ -94,6 +95,7 @@ namespace CustomFumenProviderWebServer.Controllers
             this.fumenStateService = fumenStateService;
             this.fumenStorageService = fumenStorageService;
             this.fumenChartService = fumenChartService;
+            this.fumenOptConsistencyService = fumenOptConsistencyService;
             this.fumenRemovalService = fumenRemovalService;
             this.fileCacheListService = fileCacheListService;
             this.fumenFolderPath = Environment.GetEnvironmentVariable("FumenDirectory");
@@ -465,7 +467,7 @@ namespace CustomFumenProviderWebServer.Controllers
             try
             {
                 var outputXmlFilePath = Path.Combine(fumenFolder, "Music.xml");
-                await musicXmlService.GenerateMusicXml(persistedSet, outputXmlFilePath);
+                await musicXmlService.GenerateMusicXml(persistedSet, outputXmlFilePath, zeroLevels: fumenChartService.IsCreatorRewriteEnabled);
             }
             catch (Exception e)
             {
@@ -536,120 +538,16 @@ namespace CustomFumenProviderWebServer.Controllers
             }
         }
 
-        async ValueTask<Result> UpdateZipFile(int musicId)
-        {
-            var musicIdStr = musicId.ToString().PadLeft(4, '0');
-            var tempFolder = TempPathUtils.GetNewTempFolder();
-
-            var storagePath = Path.Combine(fumenFolderPath, $"fumen{musicIdStr}");
-            var optPath = Path.Combine(storagePath, "opt");
-
-            try
-            {
-                var tempZipFile = Path.Combine(tempFolder, $"fumen{musicIdStr}.zip");
-                var zipFile = Path.Combine(storagePath, $"fumen{musicIdStr}.zip");
-                await Task.Run(() =>
-                {
-                    using var fs = System.IO.File.OpenWrite(tempZipFile);
-                    ZipFile.CreateFromDirectory(optPath, fs, CompressionLevel.SmallestSize, false);
-                });
-
-                System.IO.File.Move(tempZipFile, zipFile, true);
-
-                return new(true);
-            }
-            catch (Exception e)
-            {
-                return new(false, $"Generate .zip throw exception:{e.Message}");
-            }
-            finally
-            {
-                Directory.Delete(tempFolder, true);
-            }
-        }
-
-        /// <summary>
-        /// 读取 info.json；旧目录没有 info.json 时从 opt/Music.xml 迁移一次并落盘。
-        /// </summary>
-        async ValueTask<Result<FumenSet>> ReadOrImportInfoSetAsync(int musicId)
-        {
-            var readResult = await fumenStorageService.ReadInfoJsonAsync(musicId);
-            if (readResult.IsSuccess)
-                return readResult;
-
-            var ensureResult = fumenStorageService.EnsureOptFolder(musicId);
-            if (!ensureResult.IsSuccess)
-                return new(false, $"info.json not found and opt folder unavailable: {ensureResult.Message}");
-
-            var musicIdStr = musicId.ToString().PadLeft(4, '0');
-            var musicFolder = fumenStorageService.GetOptMusicFolder(musicId);
-            var xmlFile = Path.Combine(musicFolder, "Music.xml");
-            if (!System.IO.File.Exists(xmlFile))
-                return new(false, readResult.Message);
-
-            var parseResult = await musicXmlService.GenerateFumenSet(
-                xmlFile,
-                Path.Combine(musicFolder, $"{musicIdStr}_00.ogkr"),
-                Path.Combine(musicFolder, $"{musicIdStr}_01.ogkr"),
-                Path.Combine(musicFolder, $"{musicIdStr}_02.ogkr"),
-                Path.Combine(musicFolder, $"{musicIdStr}_03.ogkr"),
-                Path.Combine(musicFolder, $"{musicIdStr}_04.ogkr"));
-            if (!parseResult.IsSuccess)
-                return new(false, parseResult.Message);
-
-            var set = parseResult.Data;
-            FumenSetNormalizer.ApplyMusicId(set, musicId);
-            set.UpdateTime = DateTime.Now;
-
-            var writeResult = await fumenStorageService.WriteInfoJsonAsync(set);
-            if (!writeResult.IsSuccess)
-                return new(false, writeResult.Message);
-
-            return new(true, string.Empty, set);
-        }
-
-        /// <summary>
-        /// 只从 info.json 重新生成 opt/.../Music.xml。
-        /// </summary>
-        async ValueTask<Result> GenerateMusicXmlFromInfoAsync(int musicId)
-        {
-            var infoResult = await fumenStorageService.ReadInfoJsonAsync(musicId);
-            if (!infoResult.IsSuccess)
-                return new(false, infoResult.Message);
-
-            var tempFolder = TempPathUtils.GetNewTempFolder();
-            try
-            {
-                var tempXmlFile = Path.Combine(tempFolder, "Music.xml");
-                var generateResult = await musicXmlService.GenerateMusicXml(infoResult.Data, tempXmlFile);
-                if (!generateResult.IsSuccess)
-                    return generateResult;
-
-                var musicFolder = fumenStorageService.GetOptMusicFolder(musicId);
-                Directory.CreateDirectory(musicFolder);
-                System.IO.File.Move(tempXmlFile, Path.Combine(musicFolder, "Music.xml"), true);
-                return new(true);
-            }
-            catch (Exception e)
-            {
-                return new(false, $"generate Music.xml from info.json failed: {e.Message}");
-            }
-            finally
-            {
-                Directory.Delete(tempFolder, true);
-            }
-        }
-
         /// <summary>
         /// 以 info.json 为元数据/定数的唯一来源同步数据库，并按需从 info.json 重渲染 Music.xml。
-        /// 旧目录没有 info.json 时会从 Music.xml 迁移一次；常规更新不再解析 Music.xml。
+        /// info.json 缺失时从数据库重建；常规更新不再解析 Music.xml。
         /// </summary>
         async ValueTask<Result> UpdateSetInfo(
             int musicId,
             bool regenerateMusicXml = false,
             Func<FumenSet, Task<Result>> mutate = default)
         {
-            var infoResult = await ReadOrImportInfoSetAsync(musicId);
+            var infoResult = await fumenOptConsistencyService.ReadOrRebuildInfoSetAsync(musicId);
             if (!infoResult.IsSuccess)
                 return new(false, infoResult.Message);
 
@@ -705,7 +603,7 @@ namespace CustomFumenProviderWebServer.Controllers
 
                 if (regenerateMusicXml)
                 {
-                    var xmlResult = await GenerateMusicXmlFromInfoAsync(musicId);
+                    var xmlResult = await fumenOptConsistencyService.WriteOptMusicXmlFromInfoAsync(musicId);
                     if (!xmlResult.IsSuccess)
                         return xmlResult;
                 }
@@ -1054,7 +952,7 @@ namespace CustomFumenProviderWebServer.Controllers
             if (!result.IsSuccess)
                 return HttpStatus(result);
 
-            result = await UpdateZipFile(musicId);
+            result = await fumenStorageService.RepackZipAsync(musicId);
             if (!result.IsSuccess)
                 return HttpStatus(result);
 
@@ -1095,7 +993,7 @@ namespace CustomFumenProviderWebServer.Controllers
             if (!result.IsSuccess)
                 return HttpStatus(result);
 
-            result = await UpdateZipFile(musicId);
+            result = await fumenStorageService.RepackZipAsync(musicId);
             if (!result.IsSuccess)
                 return HttpStatus(result);
 
@@ -1121,7 +1019,7 @@ namespace CustomFumenProviderWebServer.Controllers
             using var _ = await fumenOperationLock.AcquireAsync(musicId);
             await using var updateScope = await FumenUpdateScope.BeginAsync(fumenDataDBFactory, fumenStorageService, logger, musicId);
 
-            var result = await UpdateZipFile(musicId);
+            var result = await fumenStorageService.RepackZipAsync(musicId);
             if (!result.IsSuccess)
                 return HttpStatus(result);
 
@@ -1157,7 +1055,7 @@ namespace CustomFumenProviderWebServer.Controllers
             if (!result.IsSuccess)
                 return HttpStatus(result);
 
-            result = await UpdateZipFile(musicId);
+            result = await fumenStorageService.RepackZipAsync(musicId);
             if (!result.IsSuccess)
                 return HttpStatus(result);
 
@@ -1204,7 +1102,7 @@ namespace CustomFumenProviderWebServer.Controllers
             if (!result.IsSuccess)
                 return HttpStatus(result);
 
-            result = await UpdateZipFile(musicId);
+            result = await fumenStorageService.RepackZipAsync(musicId);
             if (!result.IsSuccess)
                 return HttpStatus(result);
 
@@ -1245,9 +1143,9 @@ namespace CustomFumenProviderWebServer.Controllers
                 return HttpStatus(result);
 
             //opt 里的内容可能比 zip 新(直接改盘 / 刚重新生成 Music.xml),以前这里不重打包,客户端会拿到过期 zip
-            if (IsZipOutdated(musicId))
+            if (fumenStorageService.IsZipOutdated(musicId))
             {
-                result = await UpdateZipFile(musicId);
+                result = await fumenStorageService.RepackZipAsync(musicId);
                 if (!result.IsSuccess)
                     return HttpStatus(result);
             }
@@ -1325,38 +1223,12 @@ namespace CustomFumenProviderWebServer.Controllers
                 if (!result.IsSuccess)
                     return HttpStatus(result);
 
-                result = await UpdateZipFile(musicId);
+                result = await fumenStorageService.RepackZipAsync(musicId);
                 if (!result.IsSuccess)
                     return HttpStatus(result);
             }
 
             return HttpStatus(result);
-        }
-
-        /// <summary>
-        /// opt 目录里存在比 fumen{musicId}.zip 更新的文件时,说明 zip 已过期,需要重新打包。
-        /// (opt 刚由 zip 解包出来时,解包文件会保留原有写入时间,不会误判)
-        /// </summary>
-        private bool IsZipOutdated(int musicId)
-        {
-            var musicIdStr = musicId.ToString().PadLeft(4, '0');
-            var storagePath = Path.Combine(fumenFolderPath, $"fumen{musicIdStr}");
-            var optPath = Path.Combine(storagePath, "opt");
-            var zipPath = Path.Combine(storagePath, $"fumen{musicIdStr}.zip");
-
-            if (!Directory.Exists(optPath))
-                return false;
-            if (!System.IO.File.Exists(zipPath))
-                return true;
-
-            var zipTime = System.IO.File.GetLastWriteTimeUtc(zipPath);
-            foreach (var file in Directory.EnumerateFiles(optPath, "*.*", SearchOption.AllDirectories))
-            {
-                if (System.IO.File.GetLastWriteTimeUtc(file) > zipTime)
-                    return true;
-            }
-
-            return false;
         }
     }
 }

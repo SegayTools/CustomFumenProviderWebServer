@@ -42,7 +42,7 @@ namespace CustomFumenProviderWebServer.Services
             RegexOptions.Multiline | RegexOptions.Compiled);
 
         private static readonly Regex SelfMadePrefixRegex = new(
-            @"^\s*\[自制谱\s*Lv\.[^\]]*\]\s*",
+            @"^\s*\[自制谱\s*Lv\.(?<level>[^\]]*)\]\s*",
             RegexOptions.Compiled);
 
         private static readonly UTF8Encoding StrictUtf8 = new(false, true);
@@ -95,6 +95,42 @@ namespace CustomFumenProviderWebServer.Services
         public static string StripSelfMadePrefix(string creator)
         {
             return SelfMadePrefixRegex.Replace(creator ?? string.Empty, string.Empty).Trim();
+        }
+
+        /// <summary>
+        /// 读取谱面字节中的首个 CREATOR 值；非 UTF-8 或没有 CREATOR 行时返回 false。
+        /// </summary>
+        public static bool TryReadCreatorValue(byte[] bytes, out string value)
+        {
+            value = null;
+            if (!TryDecodeUtf8(bytes, out var text, out _, out _))
+                return false;
+
+            var match = CreatorLineRegex.Match(text);
+            if (!match.Success)
+                return false;
+
+            value = match.Groups["value"].Value;
+            return true;
+        }
+
+        /// <summary>
+        /// 解析 <c>[自制谱 Lv.x] 原谱师</c> 形式的 CREATOR 值。
+        /// </summary>
+        public static bool TryParseSelfMadeCreator(string creatorValue, out string levelText, out string originalCreator)
+        {
+            levelText = null;
+            originalCreator = null;
+            if (creatorValue is null)
+                return false;
+
+            var match = SelfMadePrefixRegex.Match(creatorValue);
+            if (!match.Success)
+                return false;
+
+            levelText = match.Groups["level"].Value.Trim();
+            originalCreator = StripSelfMadePrefix(creatorValue);
+            return true;
         }
 
         /// <summary>
@@ -210,16 +246,17 @@ namespace CustomFumenProviderWebServer.Services
         }
 
         /// <summary>
-        /// 重新生成某个难度的 opt 副本。优先使用根目录归档作为源；
-        /// 归档不存在（改动前上传的旧谱面）时退回使用现有 opt 文件。
+        /// 重新生成某个难度的 opt 副本。开关开启时优先使用根目录归档作为源，
+        /// 归档不存在（改动前上传的旧谱面）时退回使用现有 opt 文件；
+        /// 开关关闭时撤销已写入的自制谱标记（归档优先，否则剥离前缀）。
         /// </summary>
         public async Task<Result> RegenerateOptChartAsync(int musicId, int diffIdx, float level)
         {
-            if (!creatorRewriteEnabled)
-                return new(true);
-
             var optFilePath = storageService.GetOptFumenPath(musicId, diffIdx);
             var archiveFilePath = storageService.GetArchivePath(musicId, diffIdx);
+
+            if (!creatorRewriteEnabled)
+                return await RestoreOriginalChartAsync(optFilePath, archiveFilePath);
 
             string sourceFilePath;
             if (File.Exists(archiveFilePath))
@@ -230,6 +267,82 @@ namespace CustomFumenProviderWebServer.Services
                 return new(true);
 
             return await ProcessToFileAsync(sourceFilePath, optFilePath, level);
+        }
+
+        /// <summary>
+        /// 开关关闭时把 opt 谱面恢复为上传原文；没有自制谱前缀的文件保持不变。
+        /// </summary>
+        private async Task<Result> RestoreOriginalChartAsync(string optFilePath, string archiveFilePath)
+        {
+            if (!File.Exists(optFilePath))
+                return new(true);
+
+            byte[] optBytes;
+            try
+            {
+                optBytes = await File.ReadAllBytesAsync(optFilePath);
+            }
+            catch (Exception e)
+            {
+                return new(false, $"read opt fumen file failed: {e.Message}");
+            }
+
+            if (!TryDecodeUtf8(optBytes, out var text, out var hasBom, out _))
+                return new(true);
+
+            var creatorMatch = CreatorLineRegex.Match(text);
+            if (!creatorMatch.Success)
+                return new(true);
+
+            if (!TryParseSelfMadeCreator(creatorMatch.Groups["value"].Value, out _, out _))
+                return new(true);
+
+            if (File.Exists(archiveFilePath))
+            {
+                try
+                {
+                    var archiveBytes = await File.ReadAllBytesAsync(archiveFilePath);
+                    if (!TryDecodeUtf8(archiveBytes, out var archiveText, out var archiveHasBom, out _))
+                        return await WriteBytesAsync(optFilePath, archiveBytes);
+
+                    var archiveCreatorMatch = CreatorLineRegex.Match(archiveText);
+                    if (!archiveCreatorMatch.Success
+                        || !TryParseSelfMadeCreator(archiveCreatorMatch.Groups["value"].Value, out _, out _))
+                        return await WriteBytesAsync(optFilePath, archiveBytes);
+
+                    //归档本身也带前缀（用户上传的就是处理后内容）时，直接写回归档会让关闭态
+                    //每次启动都重新判定为“已处理”。剥离前缀后写入 opt，归档保持原文。
+                    return await WriteBytesAsync(
+                        optFilePath,
+                        StripSelfMadeCreator(archiveText, archiveHasBom));
+                }
+                catch (Exception e)
+                {
+                    return new(false, $"read archived fumen file failed: {e.Message}");
+                }
+            }
+
+            return await WriteBytesAsync(optFilePath, StripSelfMadeCreator(text, hasBom));
+        }
+
+        /// <summary>
+        /// 把谱面文本首个 CREATOR 行恢复为原谱师，保留 BOM、缩进与换行风格。
+        /// </summary>
+        private static byte[] StripSelfMadeCreator(string text, bool hasBom)
+        {
+            var restoredText = CreatorLineRegex.Replace(text, match =>
+            {
+                var originalCreator = StripSelfMadePrefix(match.Groups["value"].Value);
+                if (originalCreator.Length == 0)
+                    originalCreator = DefaultCreator;
+                return BuildCreatorLine(match, originalCreator);
+            }, 1);
+
+            var content = new UTF8Encoding(false, true).GetBytes(restoredText);
+            if (hasBom)
+                content = [.. new UTF8Encoding(true).GetPreamble(), .. content];
+
+            return content;
         }
 
         private static string BuildCreatorLine(Match match, string value)

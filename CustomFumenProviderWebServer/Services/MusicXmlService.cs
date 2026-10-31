@@ -152,7 +152,24 @@ namespace CustomFumenProviderWebServer.Services
             }
         }
 
-        public async Task<Result> GenerateMusicXml(FumenSet set, string outputFilePath)
+        /// <summary>
+        /// 把定数换算成百分位整数，供 Music.xml 渲染与一致性检查共用。
+        /// </summary>
+        public static int LevelToHundredths(float level)
+        {
+            return (int)Math.Round((decimal)level * 100m, MidpointRounding.AwayFromZero);
+        }
+
+        /// <summary>
+        /// 按 info.json 的数据渲染 opt 使用的 Music.xml。
+        /// </summary>
+        /// <param name="set">谱面元数据与难度定数。</param>
+        /// <param name="outputFilePath">Music.xml 输出路径。</param>
+        /// <param name="zeroLevels">
+        /// 为 true 时所有已存在难度的定数写 0（开关开启时的 opt 派生内容），
+        /// 为 false 时写 info.json 中的真实定数。
+        /// </param>
+        public async Task<Result> GenerateMusicXml(FumenSet set, string outputFilePath, bool zeroLevels = false)
         {
             using var rs = typeof(MusicXmlService).Assembly.GetManifestResourceStream("CustomFumenProviderWebServer.Resources.Music.xml");
             var musicXml = XDocument.Load(rs);
@@ -193,11 +210,19 @@ namespace CustomFumenProviderWebServer.Services
                     var diff = set.FumenDifficults.FirstOrDefault(x => x.DifficultIndex == i);
                     if (diff is not null)
                     {
-                        //用 decimal 精确换算:旧的 Math.Round(frac*100+0.5) 实际是向上取整,会让约一半的定数每次重写 +0.01。
-                        //固定写两位数字,保证按"百分位整数"或"小数点后数字"两种读法得到同一个值。
-                        var levelHundredths = (int)Math.Round((decimal)diff.Level * 100m, MidpointRounding.AwayFromZero);
-                        fumenElement.XPathSelectElement("./FumenConstIntegerPart").Value = (levelHundredths / 100).ToString();
-                        fumenElement.XPathSelectElement("./FumenConstFractionalPart").Value = (levelHundredths % 100).ToString("D2");
+                        if (zeroLevels)
+                        {
+                            fumenElement.XPathSelectElement("./FumenConstIntegerPart").Value = "0";
+                            fumenElement.XPathSelectElement("./FumenConstFractionalPart").Value = "0";
+                        }
+                        else
+                        {
+                            //用 decimal 精确换算:旧的 Math.Round(frac*100+0.5) 实际是向上取整,会让约一半的定数每次重写 +0.01。
+                            //固定写两位数字,保证按"百分位整数"或"小数点后数字"两种读法得到同一个值。
+                            var levelHundredths = LevelToHundredths(diff.Level);
+                            fumenElement.XPathSelectElement("./FumenConstIntegerPart").Value = (levelHundredths / 100).ToString();
+                            fumenElement.XPathSelectElement("./FumenConstFractionalPart").Value = (levelHundredths % 100).ToString("D2");
+                        }
                         fumenElement.XPathSelectElement("./FumenFile/path").Value = $"{idStr}_0{i}.ogkr";
                     }
                     else

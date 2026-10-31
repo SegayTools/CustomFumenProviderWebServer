@@ -224,4 +224,91 @@ public class FumenStorageServiceTests
         Assert.False((await storage.WriteRelativeFileAsync(0, "a.txt", new MemoryStream(new byte[] { 1 }))).IsSuccess);
         Assert.False((await storage.WriteRelativeFileAsync(-1, "a.txt", new MemoryStream(new byte[] { 1 }))).IsSuccess);
     }
+
+    [Fact]
+    public void IsZipOutdated_NoOpt_ReturnsFalse()
+    {
+        using var temp = new TempFolderScope();
+        var storage = new FumenStorageService(temp.Path);
+
+        Assert.False(storage.IsZipOutdated(25666));
+    }
+
+    [Fact]
+    public void IsZipOutdated_MissingZip_ReturnsTrue()
+    {
+        using var temp = new TempFolderScope();
+        var storage = new FumenStorageService(temp.Path);
+        var musicFolder = storage.GetOptMusicFolder(25666);
+        Directory.CreateDirectory(musicFolder);
+        File.WriteAllText(Path.Combine(musicFolder, "Music.xml"), "<MusicData />");
+
+        Assert.True(storage.IsZipOutdated(25666));
+    }
+
+    [Fact]
+    public void IsZipOutdated_OptNewerThanZip_ReturnsTrue()
+    {
+        using var temp = new TempFolderScope();
+        var storage = new FumenStorageService(temp.Path);
+        var musicFolder = storage.GetOptMusicFolder(25666);
+        Directory.CreateDirectory(musicFolder);
+        var optFile = Path.Combine(musicFolder, "Music.xml");
+        File.WriteAllText(optFile, "<MusicData />");
+        File.WriteAllText(storage.GetZipPath(25666), "old");
+
+        File.SetLastWriteTimeUtc(storage.GetZipPath(25666), DateTime.UtcNow.AddHours(-2));
+        File.SetLastWriteTimeUtc(optFile, DateTime.UtcNow.AddHours(-1));
+
+        Assert.True(storage.IsZipOutdated(25666));
+    }
+
+    [Fact]
+    public void IsZipOutdated_ZipNewerThanOpt_ReturnsFalse()
+    {
+        using var temp = new TempFolderScope();
+        var storage = new FumenStorageService(temp.Path);
+        var musicFolder = storage.GetOptMusicFolder(25666);
+        Directory.CreateDirectory(musicFolder);
+        var optFile = Path.Combine(musicFolder, "Music.xml");
+        File.WriteAllText(optFile, "<MusicData />");
+        File.WriteAllText(storage.GetZipPath(25666), "old");
+
+        File.SetLastWriteTimeUtc(optFile, DateTime.UtcNow.AddHours(-2));
+        File.SetLastWriteTimeUtc(storage.GetZipPath(25666), DateTime.UtcNow.AddHours(-1));
+
+        Assert.False(storage.IsZipOutdated(25666));
+    }
+
+    [Fact]
+    public async Task RepackZipAsync_WithoutOpt_ReturnsFailure()
+    {
+        using var temp = new TempFolderScope();
+        var storage = new FumenStorageService(temp.Path);
+
+        var result = await storage.RepackZipAsync(25666);
+
+        Assert.False(result.IsSuccess);
+        Assert.Contains("Generate .zip", result.Message);
+    }
+
+    [Fact]
+    public async Task RepackZipAsync_ReplacesExistingZipWithCurrentOpt()
+    {
+        using var temp = new TempFolderScope();
+        var storage = new FumenStorageService(temp.Path);
+        var optMusicFolder = storage.GetOptMusicFolder(25666);
+        Directory.CreateDirectory(optMusicFolder);
+        await File.WriteAllTextAsync(Path.Combine(optMusicFolder, "Music.xml"), "<MusicData />");
+        await File.WriteAllTextAsync(storage.GetZipPath(25666), "old");
+
+        var result = await storage.RepackZipAsync(25666);
+
+        Assert.True(result.IsSuccess, result.Message);
+        using var zip = ZipFile.OpenRead(storage.GetZipPath(25666));
+        var entry = zip.GetEntry("music/music25666/Music.xml");
+        Assert.NotNull(entry);
+        using var reader = new StreamReader(entry!.Open());
+        Assert.Equal("<MusicData />", await reader.ReadToEndAsync());
+    }
 }

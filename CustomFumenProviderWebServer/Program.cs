@@ -54,6 +54,7 @@ namespace CustomFumenProviderWebServer
             builder.Services.AddSingleton<AdminAuthService>();
             builder.Services.AddSingleton<FumenStorageService>();
             builder.Services.AddSingleton<FumenChartService>();
+            builder.Services.AddSingleton<FumenOptConsistencyService>();
             builder.Services.AddSingleton<FumenRemovalService>();
             builder.Services.AddSingleton<FumenStateService>();
 
@@ -63,6 +64,7 @@ namespace CustomFumenProviderWebServer
 
             builder.Services.AddSingleton<IFileCacheListService, FileCacheListService>();
             builder.Services.AddHostedService<FileCacheListUpdater>();
+            builder.Services.AddHostedService<FumenOptConsistencyHostedService>();
 
             //----------------------------------------------------------
 
