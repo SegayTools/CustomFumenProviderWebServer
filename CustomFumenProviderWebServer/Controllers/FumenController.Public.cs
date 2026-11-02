@@ -202,6 +202,7 @@ namespace CustomFumenProviderWebServer.Controllers
         /// <param name="expOgkrFormFile">(可选)谱面Expert文件 (.ogkr)</param>
         /// <param name="mstOgkrFormFile">(可选)谱面Master文件 (.ogkr)</param>
         /// <param name="lucOgkrFormFile">(可选)谱面Lunatic文件 (.ogkr)</param>
+        /// <param name="imContact">(可选)IM联系方式, 如 QQ号 / Discord 用户名</param>
         /// <returns>投稿处理结果，成功时包含创建的谱面信息</returns>
         [Route("deliverFumen")]
         [HttpPost]
@@ -216,7 +217,8 @@ namespace CustomFumenProviderWebServer.Controllers
             IFormFile advOgkrFormFile,
             IFormFile expOgkrFormFile,
             IFormFile mstOgkrFormFile,
-            IFormFile lucOgkrFormFile
+            IFormFile lucOgkrFormFile,
+            string imContact = null
             )
         {
             var traceId = Guid.NewGuid().ToString().Replace("-", string.Empty).Replace("[", string.Empty).Replace("]", string.Empty);
@@ -309,6 +311,7 @@ namespace CustomFumenProviderWebServer.Controllers
             {
                 MusicId = newMusicId,
                 Contact = contract,
+                ImContact = string.IsNullOrWhiteSpace(imContact) ? null : imContact.Trim(),
                 PasswordHash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(password)))
             };
             set.PublishState = PublishState.NotReadyForPending;

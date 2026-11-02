@@ -35,6 +35,11 @@ public class SwaggerGenerationTests
 
         Assert.True(document.Paths.ContainsKey("/api/update/file"));
         Assert.False(document.Paths.ContainsKey("/api/fumen/update/file"));
+
+        Assert.True(document.Paths.ContainsKey("/api/deliverFumen"));
+        var deliver = document.Paths["/api/deliverFumen"].Operations[OperationType.Post];
+        var imContact = Assert.Single(deliver.Parameters.Where(x => x.Name == "imContact"));
+        Assert.False(imContact.Required);
     }
 
     private sealed class TestWebHostEnvironment : IWebHostEnvironment

@@ -7,6 +7,12 @@ namespace CustomFumenProviderWebServer.Models.Tables
         public int MusicId { get; set; }
 
         public string Contact { get; set; }
+
+        /// <summary>
+        /// (可选)IM 联系方式, 如 QQ号 / Discord 用户名
+        /// </summary>
+        public string ImContact { get; set; }
+
         public string PasswordHash { get; set; }
 
         [JsonIgnore]

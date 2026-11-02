@@ -85,6 +85,9 @@ namespace CustomFumenProviderWebServer.Migrations
                     b.Property<string>("Contact")
                         .HasColumnType("longtext");
 
+                    b.Property<string>("ImContact")
+                        .HasColumnType("longtext");
+
                     b.Property<string>("PasswordHash")
                         .HasColumnType("longtext");
 
