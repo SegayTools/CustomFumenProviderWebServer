@@ -81,6 +81,23 @@ namespace CustomFumenProviderWebServer.Services.Email
                         periodEndUtc = periodStartUtc.AddSeconds(1);
 
                     var activities = await LoadActivitiesAsync(periodStartUtc, periodEndUtc, stoppingToken);
+
+                    if (activities.Count == 0)
+                    {
+                        // 没有投稿/修改/删除时不发邮件，但仍然记录本周期，避免下次循环立刻再次检查。
+                        await SaveReportAsync(
+                            periodStartUtc,
+                            periodEndUtc,
+                            eventCount: 0,
+                            recipients: null,
+                            stoppingToken);
+                        logger.LogInformation(
+                            "No fumen activity in period {PeriodStartUtc:O} - {PeriodEndUtc:O}; report email skipped.",
+                            periodStartUtc,
+                            periodEndUtc);
+                        continue;
+                    }
+
                     var email = ActivityReportBuilder.Build(
                         reportOptions,
                         periodStartUtc,
@@ -89,18 +106,12 @@ namespace CustomFumenProviderWebServer.Services.Email
 
                     await emailSender.SendAsync(email, stoppingToken);
 
-                    using (var db = await fumenDataDBFactory.CreateDbContextAsync(stoppingToken))
-                    {
-                        db.FumenActivityReports.Add(new FumenActivityReport
-                        {
-                            PeriodStartUtc = periodStartUtc,
-                            PeriodEndUtc = periodEndUtc,
-                            SentAtUtc = DateTime.UtcNow,
-                            EventCount = activities.Count,
-                            Recipients = string.Join(", ", reportOptions.Recipients),
-                        });
-                        await db.SaveChangesAsync(stoppingToken);
-                    }
+                    await SaveReportAsync(
+                        periodStartUtc,
+                        periodEndUtc,
+                        eventCount: activities.Count,
+                        recipients: string.Join(", ", reportOptions.Recipients),
+                        stoppingToken);
 
                     logger.LogInformation(
                         "Activity report sent to {Recipients}. Period: {PeriodStartUtc:O} - {PeriodEndUtc:O}; events: {EventCount}.",
@@ -126,6 +137,25 @@ namespace CustomFumenProviderWebServer.Services.Email
                     }
                 }
             }
+        }
+
+        private async Task SaveReportAsync(
+            DateTime periodStartUtc,
+            DateTime periodEndUtc,
+            int eventCount,
+            string? recipients,
+            CancellationToken cancellationToken)
+        {
+            using var db = await fumenDataDBFactory.CreateDbContextAsync(cancellationToken);
+            db.FumenActivityReports.Add(new FumenActivityReport
+            {
+                PeriodStartUtc = periodStartUtc,
+                PeriodEndUtc = periodEndUtc,
+                SentAtUtc = DateTime.UtcNow,
+                EventCount = eventCount,
+                Recipients = recipients,
+            });
+            await db.SaveChangesAsync(cancellationToken);
         }
 
         private async Task<List<FumenActivity>> LoadActivitiesAsync(
