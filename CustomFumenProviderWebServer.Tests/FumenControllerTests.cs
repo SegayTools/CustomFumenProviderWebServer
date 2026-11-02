@@ -479,7 +479,8 @@ public class FumenControllerTests
             chartService,
             consistencyService,
             new FumenRemovalService(testDb.Factory, storage),
-            new FakeFileCacheListService());
+            new FakeFileCacheListService(),
+            new FumenActivityLogger(testDb.Factory, NullLogger<FumenActivityLogger>.Instance));
 
         controller.ControllerContext = new ControllerContext
         {
@@ -1077,6 +1078,9 @@ public class FumenControllerTests
         Assert.Null(await db.FumenSets.FindAsync(MusicId));
         Assert.Null(await db.FumenOwners.FindAsync(MusicId));
         Assert.Empty(await db.FumenDifficults.Where(x => x.MusicId == MusicId).ToListAsync());
+        var activity = Assert.Single(await db.FumenActivities.Where(x => x.Type == FumenActivityType.Deleted).ToListAsync());
+        Assert.Equal(MusicId, activity.MusicId);
+        Assert.Equal("deleted", activity.Detail);
     }
 
     [Fact]

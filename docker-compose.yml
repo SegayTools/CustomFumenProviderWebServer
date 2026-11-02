@@ -48,6 +48,13 @@ services:
       SMTP_PASSWORD: "${SMTP_PASSWORD:-}"
       SMTP_FROM_ADDRESS: "${SMTP_FROM_ADDRESS:-mikirasora0409@126.com}"
       SMTP_FROM_NAME: "${SMTP_FROM_NAME:-CustomFumenChangedNotify}"
+      # 定时活动报表。REPORT_RECIPIENTS 支持多个收件人，用逗号分隔。
+      REPORT_ENABLED: "${REPORT_ENABLED:-true}"
+      REPORT_RECIPIENTS: "${REPORT_RECIPIENTS:-mikirasora0409@126.com}"
+      REPORT_INTERVAL_HOURS: "${REPORT_INTERVAL_HOURS:-6}"
+      REPORT_UTC_OFFSET_HOURS: "${REPORT_UTC_OFFSET_HOURS:-8}"
+      REPORT_MAX_ROWS: "${REPORT_MAX_ROWS:-500}"
+      REPORT_SITE_URL: "${REPORT_SITE_URL:-https://fumen.nageki-net.com}"
     volumes:
       - "my_fumen_vol:/FumenDirectory"
     ports:

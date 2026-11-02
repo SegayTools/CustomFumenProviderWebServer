@@ -1,5 +1,7 @@
-﻿using CustomFumenProviderWebServer.Models.Responses;
+﻿﻿using CustomFumenProviderWebServer.Models.Responses;
+using CustomFumenProviderWebServer.Models.Tables;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.EntityFrameworkCore;
 
 namespace CustomFumenProviderWebServer.Controllers
 {
@@ -45,9 +47,21 @@ namespace CustomFumenProviderWebServer.Controllers
 
             using var lockScope = await fumenOperationLock.AcquireAsync(musicId);
 
+            FumenSet removedSet = null;
+            using (var db = await fumenDataDBFactory.CreateDbContextAsync())
+            {
+                removedSet = await db.FumenSets
+                    .AsNoTracking()
+                    .Include(x => x.Owner)
+                    .FirstOrDefaultAsync(x => x.MusicId == musicId);
+            }
+
             var result = await fumenRemovalService.RemoveAsync(musicId);
             if (result.IsSuccess)
+            {
                 fileCacheListService.CacheFumenMap.TryRemove(musicId, out _);
+                await RecordActivityAsync(musicId, FumenActivityType.Deleted, "deleted", removedSet);
+            }
 
             return new(result.IsSuccess, result.Message);
         }

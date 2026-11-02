@@ -26,9 +26,13 @@ namespace CustomFumenProviderWebServer
 
             // SMTP 邮件发送。参数全部来自环境变量，未配置时相关接口返回 503，不影响现有功能。
             var emailOptions = EmailOptions.FromEnvironment();
+            var reportOptions = ActivityReportOptions.FromEnvironment();
             builder.Services.AddSingleton(emailOptions);
+            builder.Services.AddSingleton(reportOptions);
             builder.Services.AddSingleton<IEmailTransport, SmtpEmailTransport>();
             builder.Services.AddSingleton<SmtpEmailSender>();
+            builder.Services.AddSingleton<FumenActivityLogger>();
+            builder.Services.AddHostedService<ActivityReportHostedService>();
 
             var fumenFolderPath = Environment.GetEnvironmentVariable("FumenDirectory");
             if (string.IsNullOrWhiteSpace(fumenFolderPath))
@@ -91,6 +95,19 @@ namespace CustomFumenProviderWebServer
                 startupLogger.LogWarning(
                     "SMTP email disabled. Missing or invalid environment variables: {MissingSettings}.",
                     string.Join(", ", emailOptions.GetMissingSettings()));
+            }
+
+            if (reportOptions.Enabled)
+            {
+                startupLogger.LogInformation(
+                    "Activity report email enabled. Recipients: {Recipients}; interval: {IntervalHours}h; offset: UTC{Offset:+0;-0}.",
+                    string.Join(", ", reportOptions.Recipients),
+                    reportOptions.IntervalHours,
+                    reportOptions.UtcOffsetHours);
+            }
+            else
+            {
+                startupLogger.LogInformation("Activity report email is disabled by REPORT_ENABLED.");
             }
 
             //启动时读取并初始化管理员凭据(环境变量 ADMIN_PASSWORD 或默认哈希)

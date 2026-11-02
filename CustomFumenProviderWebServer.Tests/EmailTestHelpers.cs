@@ -25,6 +25,19 @@ internal static class EmailTestHelpers
             FromName = "Test Sender",
         };
     }
+
+    public static ActivityReportOptions CreateReportOptions()
+    {
+        return new ActivityReportOptions
+        {
+            Enabled = true,
+            Recipients = new[] { "report@example.com" },
+            IntervalHours = 6,
+            UtcOffsetHours = 8,
+            MaxRows = 500,
+            SiteUrl = "https://example.com",
+        };
+    }
 }
 
 internal sealed class FakeEmailTransport : IEmailTransport

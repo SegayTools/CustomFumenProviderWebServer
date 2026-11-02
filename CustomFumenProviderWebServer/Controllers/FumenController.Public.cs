@@ -38,6 +38,7 @@ namespace CustomFumenProviderWebServer.Controllers
         private readonly FumenOptConsistencyService fumenOptConsistencyService;
         private readonly FumenRemovalService fumenRemovalService;
         private readonly IFileCacheListService fileCacheListService;
+        private readonly FumenActivityLogger activityLogger;
         private readonly string fumenFolderPath;
 
         private static readonly JsonSerializerOptions jsonSerializerOptions = new JsonSerializerOptions()
@@ -83,7 +84,7 @@ namespace CustomFumenProviderWebServer.Controllers
             return result;
         }
 
-        public FumenController(ILogger<FumenController> logger, IDbContextFactory<FumenDataDB> fumenDataDBFactory, AudioService audioService, JacketService jacketService, MusicXmlService musicXmlService, FumenOperationLock fumenOperationLock, AdminAuthService adminAuthService, FumenStateService fumenStateService, FumenStorageService fumenStorageService, FumenChartService fumenChartService, FumenOptConsistencyService fumenOptConsistencyService, FumenRemovalService fumenRemovalService, IFileCacheListService fileCacheListService)
+        public FumenController(ILogger<FumenController> logger, IDbContextFactory<FumenDataDB> fumenDataDBFactory, AudioService audioService, JacketService jacketService, MusicXmlService musicXmlService, FumenOperationLock fumenOperationLock, AdminAuthService adminAuthService, FumenStateService fumenStateService, FumenStorageService fumenStorageService, FumenChartService fumenChartService, FumenOptConsistencyService fumenOptConsistencyService, FumenRemovalService fumenRemovalService, IFileCacheListService fileCacheListService, FumenActivityLogger activityLogger)
         {
             this.logger = logger;
             this.fumenDataDBFactory = fumenDataDBFactory;
@@ -98,6 +99,7 @@ namespace CustomFumenProviderWebServer.Controllers
             this.fumenOptConsistencyService = fumenOptConsistencyService;
             this.fumenRemovalService = fumenRemovalService;
             this.fileCacheListService = fileCacheListService;
+            this.activityLogger = activityLogger;
             this.fumenFolderPath = Environment.GetEnvironmentVariable("FumenDirectory");
         }
 
@@ -532,6 +534,7 @@ namespace CustomFumenProviderWebServer.Controllers
                 traceLog($"fumen folder is copied");
 
                 await trans.CommitAsync();
+                await RecordActivityAsync(persistedSet.MusicId, FumenActivityType.Submitted, "new submission", persistedSet);
                 return check(new(true, "register successfully, waiting for pending", persistedSet));
             }
             catch (Exception e)
@@ -910,6 +913,38 @@ namespace CustomFumenProviderWebServer.Controllers
             }
         }
 
+        async Task RecordActivityAsync(int musicId, FumenActivityType type, string detail, FumenSet knownSet = null)
+        {
+            try
+            {
+                FumenSet set = knownSet;
+                if (set is null)
+                {
+                    using var db = await fumenDataDBFactory.CreateDbContextAsync();
+                    set = await db.FumenSets
+                        .AsNoTracking()
+                        .Include(x => x.Owner)
+                        .FirstOrDefaultAsync(x => x.MusicId == musicId);
+                }
+
+                await activityLogger.RecordAsync(new FumenActivity
+                {
+                    MusicId = musicId,
+                    Title = set?.Title,
+                    Artist = set?.Artist,
+                    OwnerContact = set?.Owner?.Contact,
+                    OwnerImContact = set?.Owner?.ImContact,
+                    Type = type,
+                    Detail = detail is { Length: > 512 } ? detail[..512] : detail,
+                    OccurredAtUtc = DateTime.UtcNow,
+                });
+            }
+            catch (Exception e)
+            {
+                logger.LogError(e, "Failed to record fumen activity: type={ActivityType}, musicId={MusicId}.", type, musicId);
+            }
+        }
+
         async ValueTask<bool> VerifyPermission(string password, int? musicId = null)
         {
             if (adminAuthService.VerifyAdminPassword(password))
@@ -964,6 +999,7 @@ namespace CustomFumenProviderWebServer.Controllers
                 return HttpStatus(result);
 
             await updateScope.CommitAsync();
+            await RecordActivityAsync(musicId, FumenActivityType.Modified, "jacket");
             return HttpStatus(result);
         }
 
@@ -1005,6 +1041,7 @@ namespace CustomFumenProviderWebServer.Controllers
                 return HttpStatus(result);
 
             await updateScope.CommitAsync();
+            await RecordActivityAsync(musicId, FumenActivityType.Modified, "audio");
             return HttpStatus(result);
         }
 
@@ -1031,6 +1068,7 @@ namespace CustomFumenProviderWebServer.Controllers
                 return HttpStatus(result);
 
             await updateScope.CommitAsync();
+            await RecordActivityAsync(musicId, FumenActivityType.Modified, "repack zip");
             return HttpStatus(result);
         }
 
@@ -1067,6 +1105,7 @@ namespace CustomFumenProviderWebServer.Controllers
                 return HttpStatus(result);
 
             await updateScope.CommitAsync();
+            await RecordActivityAsync(musicId, FumenActivityType.Modified, "Music.xml");
             return HttpStatus(result);
         }
 
@@ -1114,6 +1153,10 @@ namespace CustomFumenProviderWebServer.Controllers
                 return HttpStatus(result);
 
             await updateScope.CommitAsync();
+            var detail = ogkrFormFile is null
+                ? $"difficulty {diffIdx} level"
+                : $"ogkr difficulty {diffIdx}";
+            await RecordActivityAsync(musicId, FumenActivityType.Modified, detail);
             return HttpStatus(result);
         }
 
@@ -1154,6 +1197,7 @@ namespace CustomFumenProviderWebServer.Controllers
             }
 
             await updateScope.CommitAsync();
+            await RecordActivityAsync(musicId, FumenActivityType.Modified, "info.json/metadata");
             return HttpStatus(result);
         }
 
@@ -1231,6 +1275,10 @@ namespace CustomFumenProviderWebServer.Controllers
                     return HttpStatus(result);
             }
 
+            await RecordActivityAsync(
+                musicId,
+                FumenActivityType.Modified,
+                $"file {relativePath}{(repackZip ? " + repack" : string.Empty)}");
             return HttpStatus(result);
         }
     }

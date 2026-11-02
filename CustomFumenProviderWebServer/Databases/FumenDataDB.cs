@@ -8,6 +8,8 @@ namespace CustomFumenProviderWebServer.Databases
         public DbSet<FumenSet> FumenSets { get; set; }
         public DbSet<FumenDifficult> FumenDifficults { get; set; }
         public DbSet<FumenOwner> FumenOwners { get; set; }
+        public DbSet<FumenActivity> FumenActivities { get; set; }
+        public DbSet<FumenActivityReport> FumenActivityReports { get; set; }
 
         public FumenDataDB(DbContextOptions<FumenDataDB> options) : base(options)
         {
@@ -33,6 +35,12 @@ namespace CustomFumenProviderWebServer.Databases
 
             modelBuilder.Entity<FumenOwner>()
                 .HasKey(fd => new { fd.MusicId });
+
+            modelBuilder.Entity<FumenActivity>()
+                .HasIndex(x => x.OccurredAtUtc);
+
+            modelBuilder.Entity<FumenActivityReport>()
+                .HasIndex(x => x.SentAtUtc);
         }
 
         protected override void OnConfiguring(DbContextOptionsBuilder optionsBuilder)

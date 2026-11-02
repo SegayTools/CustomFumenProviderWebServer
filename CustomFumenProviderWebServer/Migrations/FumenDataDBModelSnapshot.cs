@@ -25,6 +25,75 @@ namespace CustomFumenProviderWebServer.Migrations
 
             MySqlModelBuilderExtensions.AutoIncrementColumns(modelBuilder);
 
+            modelBuilder.Entity("CustomFumenProviderWebServer.Models.Tables.FumenActivity", b =>
+                {
+                    b.Property<long>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bigint");
+
+                    MySqlPropertyBuilderExtensions.UseMySqlIdentityColumn(b.Property<long>("Id"));
+
+                    b.Property<string>("Artist")
+                        .HasColumnType("longtext");
+
+                    b.Property<string>("Detail")
+                        .HasColumnType("longtext");
+
+                    b.Property<int>("MusicId")
+                        .HasColumnType("int");
+
+                    b.Property<DateTime>("OccurredAtUtc")
+                        .HasColumnType("datetime(6)");
+
+                    b.Property<string>("OwnerContact")
+                        .HasColumnType("longtext");
+
+                    b.Property<string>("OwnerImContact")
+                        .HasColumnType("longtext");
+
+                    b.Property<string>("Title")
+                        .HasColumnType("longtext");
+
+                    b.Property<int>("Type")
+                        .HasColumnType("int");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("OccurredAtUtc");
+
+                    b.ToTable("FumenActivities");
+                });
+
+            modelBuilder.Entity("CustomFumenProviderWebServer.Models.Tables.FumenActivityReport", b =>
+                {
+                    b.Property<long>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bigint");
+
+                    MySqlPropertyBuilderExtensions.UseMySqlIdentityColumn(b.Property<long>("Id"));
+
+                    b.Property<int>("EventCount")
+                        .HasColumnType("int");
+
+                    b.Property<DateTime>("PeriodEndUtc")
+                        .HasColumnType("datetime(6)");
+
+                    b.Property<DateTime>("PeriodStartUtc")
+                        .HasColumnType("datetime(6)");
+
+                    b.Property<string>("Recipients")
+                        .HasColumnType("longtext");
+
+                    b.Property<DateTime>("SentAtUtc")
+                        .HasColumnType("datetime(6)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("SentAtUtc");
+
+                    b.ToTable("FumenActivityReports");
+                });
+
             modelBuilder.Entity("CustomFumenProviderWebServer.Models.Tables.FumenDifficult", b =>
                 {
                     b.Property<int>("MusicId")
