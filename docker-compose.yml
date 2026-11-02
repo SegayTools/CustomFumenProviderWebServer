@@ -32,7 +32,6 @@ services:
         condition: service_completed_successfully
     environment:
       IS_DOCKER_ENVIRONMENT: "TRUE"
-      ASPNETCORE_HTTPS_PORTS: "8081"
       ASPNETCORE_HTTP_PORTS: "8080"
       ASPNETCORE_ENVIRONMENT: Production
       # 让 ASP.NET Core 识别反向代理传入的原始协议/主机，OAuth 回调依赖正确的 HTTPS 地址。
@@ -60,7 +59,6 @@ services:
       - "my_gmail_vol:/app/data"
     ports:
       - "12380:8080"
-      - "12381:8081"
     networks:
       my_web_net:
         ipv4_address: 196.18.0.6
