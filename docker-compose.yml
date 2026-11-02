@@ -32,15 +32,32 @@ services:
         condition: service_completed_successfully
     environment:
       IS_DOCKER_ENVIRONMENT: "TRUE"
-      ASPNETCORE_HTTPS_PORTS": 8081,
-      ASPNETCORE_HTTP_PORTS": 8080,
+      ASPNETCORE_HTTPS_PORTS: "8081"
+      ASPNETCORE_HTTP_PORTS: "8080"
       ASPNETCORE_ENVIRONMENT: Production
+      # 让 ASP.NET Core 识别反向代理传入的原始协议/主机，OAuth 回调依赖正确的 HTTPS 地址。
+      ASPNETCORE_FORWARDEDHEADERS_ENABLED: "true"
       DBConnectString: "Server=196.18.0.5;Database=fumen;Uid=root;Pwd=q6523230;"
       FumenDirectory: "/FumenDirectory"
       EnableCreatorRewrite: "false"
       DBVersion: "11.5.2"
+      # Gmail API / Google OAuth。在宿主机环境或 .env 中提供这些变量。
+      # GMAIL_REDIRECT_URI 必须与 Google Cloud Console 登记的回调地址完全一致，
+      # 例如 https://fumen.nageki-net.com/oauth/google/callback。
+      GMAIL_CLIENT_ID: "${GMAIL_CLIENT_ID:-}"
+      GMAIL_CLIENT_SECRET: "${GMAIL_CLIENT_SECRET:-}"
+      GMAIL_REDIRECT_URI: "${GMAIL_REDIRECT_URI:-}"
+      # 留空时从 OAuth 授权账户自动识别；填写时必须是授权账户本身或其已验证别名。
+      GMAIL_SENDER_ADDRESS: "${GMAIL_SENDER_ADDRESS:-}"
+      # 公开审核页面显示的应用名必须与 Google OAuth 同意屏幕中的应用名完全一致。
+      GMAIL_PUBLIC_APP_NAME: "${GMAIL_PUBLIC_APP_NAME:-CustomFumenChangedNotify}"
+      GMAIL_PUBLIC_CONTACT_EMAIL: "${GMAIL_PUBLIC_CONTACT_EMAIL:-mikirasora0409@gmail.com}"
+      GMAIL_DATA_DIR: "/app/data/gmail"
+      GMAIL_REFRESH_TOKEN: "${GMAIL_REFRESH_TOKEN:-}"
     volumes:
       - "my_fumen_vol:/FumenDirectory"
+      # Refresh Token 与 Data Protection 密钥必须持久化，否则容器重建后需要重新授权。
+      - "my_gmail_vol:/app/data"
     ports:
       - "12380:8080"
       - "12381:8081"
@@ -58,3 +75,4 @@ networks:
 volumes:
   my_db_vol:
   my_fumen_vol:
+  my_gmail_vol:

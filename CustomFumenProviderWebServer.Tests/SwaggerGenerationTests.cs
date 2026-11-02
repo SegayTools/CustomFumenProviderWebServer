@@ -40,6 +40,11 @@ public class SwaggerGenerationTests
         var deliver = document.Paths["/api/deliverFumen"].Operations[OperationType.Post];
         var imContact = Assert.Single(deliver.Parameters.Where(x => x.Name == "imContact"));
         Assert.False(imContact.Required);
+
+        Assert.True(document.Paths.ContainsKey("/oauth/google/start"));
+        Assert.True(document.Paths.ContainsKey("/oauth/google/callback"));
+        Assert.True(document.Paths.ContainsKey("/oauth/google/status"));
+        Assert.True(document.Paths.ContainsKey("/api/gmail/sendTest"));
     }
 
     private sealed class TestWebHostEnvironment : IWebHostEnvironment

@@ -452,4 +452,9 @@ $RECYCLE.BIN/
 !.vscode/tasks.json
 !.vscode/launch.json
 !.vscode/extensions.json
+
+# Local secrets (Gmail client ID/secret, refresh token, admin password)
+.env
+.env.*
+!.env.example
 /.dotnet-home/.dotnet

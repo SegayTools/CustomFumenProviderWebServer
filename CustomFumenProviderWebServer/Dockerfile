@@ -9,20 +9,20 @@ WORKDIR /app
 EXPOSE 8080
 EXPOSE 8081
 
-ARG BUILD_CONFIGURATION=Release
-
 # 此阶段用于生成服务项目
 FROM mcr.microsoft.com/dotnet/sdk:8.0 AS build
+ARG BUILD_CONFIGURATION=Release
 WORKDIR /src
 COPY ["CustomFumenProviderWebServer/CustomFumenProviderWebServer.csproj", "CustomFumenProviderWebServer/"]
 RUN dotnet restore "./CustomFumenProviderWebServer/CustomFumenProviderWebServer.csproj"
 COPY . .
 WORKDIR "/src/CustomFumenProviderWebServer"
-RUN dotnet build "./CustomFumenProviderWebServer.csproj" -c %BUILD_CONFIGURATION% -o /app/build
+RUN dotnet build "./CustomFumenProviderWebServer.csproj" -c "$BUILD_CONFIGURATION" -o /app/build
 
 # 此阶段用于发布要复制到最终阶段的服务项目
 FROM build AS publish
-RUN dotnet publish "./CustomFumenProviderWebServer.csproj" -c %BUILD_CONFIGURATION% -o /app/publish /p:UseAppHost=false
+ARG BUILD_CONFIGURATION=Release
+RUN dotnet publish "./CustomFumenProviderWebServer.csproj" -c "$BUILD_CONFIGURATION" -o /app/publish /p:UseAppHost=false
 
 # 此阶段在生产中使用，或在常规模式下从 VS 运行时使用(在不使用调试配置时为默认值)
 FROM base AS final
