@@ -12,6 +12,7 @@ namespace CustomFumenProviderWebServer.Controllers
     /// 邮件发送诊断接口。业务代码应直接注入 <see cref="SmtpEmailSender"/>。
     /// </summary>
     [ApiController]
+    [ApiExplorerSettings(IgnoreApi = true)]
     [Route("api/email")]
     public sealed class EmailController : ControllerBase
     {
