@@ -453,7 +453,7 @@ $RECYCLE.BIN/
 !.vscode/launch.json
 !.vscode/extensions.json
 
-# Local secrets (Gmail client ID/secret, refresh token, admin password)
+# Local secrets (SMTP authorization code, admin password)
 .env
 .env.*
 !.env.example

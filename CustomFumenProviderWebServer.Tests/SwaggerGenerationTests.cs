@@ -41,10 +41,9 @@ public class SwaggerGenerationTests
         var imContact = Assert.Single(deliver.Parameters.Where(x => x.Name == "imContact"));
         Assert.False(imContact.Required);
 
-        Assert.True(document.Paths.ContainsKey("/oauth/google/start"));
-        Assert.True(document.Paths.ContainsKey("/oauth/google/callback"));
-        Assert.True(document.Paths.ContainsKey("/oauth/google/status"));
-        Assert.True(document.Paths.ContainsKey("/api/gmail/sendTest"));
+        Assert.True(document.Paths.ContainsKey("/api/email/sendTest"));
+        Assert.False(document.Paths.Keys.Any(path => path.StartsWith("/oauth/google", StringComparison.OrdinalIgnoreCase)));
+        Assert.False(document.Paths.Keys.Any(path => path.Contains("gmail", StringComparison.OrdinalIgnoreCase)));
     }
 
     private sealed class TestWebHostEnvironment : IWebHostEnvironment

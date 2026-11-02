@@ -2,10 +2,9 @@ using CustomFumenProviderWebServer.Databases;
 using CustomFumenProviderWebServer.Services;
 using CustomFumenProviderWebServer.Services.CacheManager;
 using CustomFumenProviderWebServer.Services.Editor;
+using CustomFumenProviderWebServer.Services.Email;
 using CustomFumenProviderWebServer.Services.FileCacheList;
-using CustomFumenProviderWebServer.Services.Gmail;
 using CustomFumenProviderWebServer.Utils;
-using Microsoft.AspNetCore.DataProtection;
 using Microsoft.AspNetCore.Http.Features;
 using Microsoft.AspNetCore.StaticFiles;
 using Microsoft.EntityFrameworkCore;
@@ -25,34 +24,11 @@ namespace CustomFumenProviderWebServer
             builder.Services.AddControllers();
             builder.Services.Configure<FormOptions>(options => FumenUploadLimits.ConfigureFormOptions(options));
 
-            // Gmail API / Google OAuth。参数全部来自环境变量，未配置时相关接口返回 503，不影响现有功能。
-            var gmailOptions = GmailOptions.FromEnvironment();
-            builder.Services.AddSingleton(gmailOptions);
-            builder.Services.AddSingleton(TimeProvider.System);
-            builder.Services.AddHttpClient(GmailOptions.HttpClientName, client =>
-            {
-                client.Timeout = TimeSpan.FromSeconds(30);
-            });
-
-            if (gmailOptions.IsConfigured)
-            {
-                Directory.CreateDirectory(gmailOptions.DataDirectory);
-                builder.Services.AddDataProtection()
-                    .SetApplicationName("CustomFumenProviderWebServer")
-                    .PersistKeysToFileSystem(
-                        new DirectoryInfo(Path.Combine(gmailOptions.DataDirectory, "keys")));
-                builder.Services.AddSingleton<IGmailRefreshTokenStore, GmailTokenStore>();
-                builder.Services.AddSingleton<IGmailAccountStore, GmailAccountStore>();
-            }
-            else
-            {
-                builder.Services.AddSingleton<IGmailRefreshTokenStore, DisabledGmailRefreshTokenStore>();
-                builder.Services.AddSingleton<IGmailAccountStore, DisabledGmailAccountStore>();
-            }
-            builder.Services.AddSingleton<GoogleOAuthStateStore>();
-            builder.Services.AddSingleton<IGmailAccessTokenProvider, GmailTokenProvider>();
-            builder.Services.AddSingleton<GmailAuthorizationService>();
-            builder.Services.AddSingleton<GmailEmailSender>();
+            // SMTP 邮件发送。参数全部来自环境变量，未配置时相关接口返回 503，不影响现有功能。
+            var emailOptions = EmailOptions.FromEnvironment();
+            builder.Services.AddSingleton(emailOptions);
+            builder.Services.AddSingleton<IEmailTransport, SmtpEmailTransport>();
+            builder.Services.AddSingleton<SmtpEmailSender>();
 
             var fumenFolderPath = Environment.GetEnvironmentVariable("FumenDirectory");
             if (string.IsNullOrWhiteSpace(fumenFolderPath))
@@ -102,19 +78,19 @@ namespace CustomFumenProviderWebServer
             var app = builder.Build();
 
             var startupLogger = app.Services.GetRequiredService<ILogger<Program>>();
-            if (gmailOptions.IsConfigured)
+            if (emailOptions.IsConfigured)
             {
                 startupLogger.LogInformation(
-                    "Gmail integration enabled. Sender: {SenderAddress}; redirect URI: {RedirectUri}; data directory: {DataDirectory}.",
-                    gmailOptions.SenderAddress,
-                    gmailOptions.RedirectUri,
-                    gmailOptions.DataDirectory);
+                    "SMTP email enabled. Server: {Host}:{Port}; sender: {SenderAddress}.",
+                    emailOptions.Host,
+                    emailOptions.Port,
+                    emailOptions.FromAddress);
             }
             else
             {
                 startupLogger.LogWarning(
-                    "Gmail integration disabled. Missing or invalid environment variables: {MissingSettings}.",
-                    string.Join(", ", gmailOptions.GetMissingSettings()));
+                    "SMTP email disabled. Missing or invalid environment variables: {MissingSettings}.",
+                    string.Join(", ", emailOptions.GetMissingSettings()));
             }
 
             //启动时读取并初始化管理员凭据(环境变量 ADMIN_PASSWORD 或默认哈希)
